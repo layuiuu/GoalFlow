@@ -500,6 +500,7 @@
     }).join('');
     var step2 =
       '<div class="step-ind">第 2 步 / 共 2 步 · 每天能投入多少时间</div>' +
+      step1Fields +
       '<div class="form-2col">' +
       '<div class="form-item"><label>工作日可用（分钟）</label><input type="number" id="gf-weekday" class="js-goal-min" min="0" step="10" value="' + (g.weekdayMinutes != null ? g.weekdayMinutes : 60) + '"></div>' +
       '<div class="form-item"><label>周末可用（分钟）</label><input type="number" id="gf-weekend" class="js-goal-min" min="0" step="10" value="' + (g.weekendMinutes != null ? g.weekendMinutes : 90) + '"></div>' +
