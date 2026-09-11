@@ -8,7 +8,7 @@
  * ========================================================== */
 'use strict';
 
-var VERSION = 'v1.4.0';
+var VERSION = 'v1.5.0';
 var CACHE = 'goalflow-' + VERSION;
 
 var ASSETS = [
