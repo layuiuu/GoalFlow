@@ -1136,8 +1136,9 @@
         }).join('') + '</div>';
       }
       dates.forEach(function (d) {
+        html += '<div id="day-' + d + '">';
         html += '<div class="group-title">' + d + ' 周' + Store.weekdayCN(d) + (d === Store.todayStr() ? ' · 今天' : d < Store.todayStr() ? ' · 已过期' : '') + '</div>';
-        html += renderPlanDay(d, true);
+        html += renderPlanDay(d, true) + '</div>';
       });
     }
 
@@ -1154,6 +1155,13 @@
 
   function planDateLabel() {
     var d = state.planDate;
+    if (state.planView === 'week') {
+      var wk = Agg.weekDates(d);
+      var isThis = wk.indexOf(Store.todayStr()) >= 0;
+      var range = Store.parseDate(wk[0]).getMonth() + 1 + '月' + Store.parseDate(wk[0]).getDate() + '日 – ' +
+        (Store.parseDate(wk[6]).getMonth() + 1) + '月' + Store.parseDate(wk[6]).getDate() + '日';
+      return (isThis ? '本周 · ' : '周 · ') + range;
+    }
     var txt = Store.parseDate(d).getMonth() + 1 + '月' + Store.parseDate(d).getDate() + '日 周' + Store.weekdayCN(d);
     if (d === Store.todayStr()) txt = '今天 · ' + txt;
     return txt;
@@ -1203,35 +1211,59 @@
     return html;
   }
 
-  /** 计划页任务操作菜单（action sheet） */
+  /** 计划页任务操作菜单（action sheet）：专注管理（编辑/锁定/删除） */
   function openTaskMenuModal(id) {
     var t = Store.taskById(id);
     if (!t) return;
+    var isRule = t.source === 'rule';
     var lockItem;
-    if (t.source === 'rule') {
-      lockItem = '<button class="as-item" data-action="close-modal" style="color:var(--muted)">🔒 规则生成的固定任务（到目标详情管理规则）</button>';
+    if (isRule) {
+      lockItem = '<button class="as-item" style="color:var(--muted)" data-action="menu-goto-goal" data-goal="' + t.goalId + '">🔒 固定任务（AI 不可修改）</button>' +
+        '<button class="as-item" data-action="menu-goto-goal" data-goal="' + t.goalId + '">⤴ 前往目标详情（管理此规则）</button>';
     } else if (t.locked) {
       lockItem = '<button class="as-item" data-action="menu-lock" data-id="' + t.id + '">🔓 取消锁定（允许 AI 调整）</button>';
     } else {
       lockItem = '<button class="as-item" data-action="menu-lock" data-id="' + t.id + '">🔒 锁定（设为固定，AI 不可修改）</button>';
     }
     openModal('<div class="action-sheet">' +
-      '<p class="card-sub" style="margin-bottom:6px">' + (t.locked || t.source === 'rule' ? '🔒 ' : '') + esc(t.title) + ' · ' + t.date + '</p>' +
+      '<p class="card-sub" style="margin-bottom:6px">' + (t.locked || isRule ? '🔒 ' : '') + esc(t.title) + ' · ' + t.date + '</p>' +
       '<button class="as-item" data-action="menu-edit" data-id="' + t.id + '">✎ 编辑任务</button>' +
-      (t.source === 'rule' || t.locked ? '' :
-        '<button class="as-item" data-action="menu-move" data-id="' + t.id + '" data-dir="up">↑ 同日内前移</button>' +
-        '<button class="as-item" data-action="menu-move" data-id="' + t.id + '" data-dir="down">↓ 同日内后移</button>') +
-      '<button class="as-item" data-action="open-task-detail" data-id="' + t.id + '">🎯 标记状态</button>' +
       lockItem +
       '<button class="as-item danger" data-action="del-task" data-id="' + t.id + '">🗑 删除任务</button>' +
       '<button class="as-item" data-action="close-modal" style="text-align:center;color:var(--muted)">取消</button>' +
       '</div>');
   }
 
-  /* ---------- 任务表单 ---------- */
+  /** 重复任务生成：按规则返回日期数组（上限 30 条，截止到目标 deadline 或 90 天） */
+  function repeatDates(goalId, startDate, mode, opts) {
+    var goal = Store.goalById(goalId);
+    var end = goal && goal.deadline && goal.deadline > startDate ? goal.deadline : Store.addDays(startDate, 90);
+    var dates = [];
+    if (mode === 'daily') {
+      for (var d = startDate; d <= end && dates.length < 30; d = Store.addDays(d, 1)) dates.push(d);
+    } else if (mode === 'weekly') {
+      var wds = (opts.weekdays || []).slice().sort(function (a, b) { return a - b; });
+      var cur = startDate;
+      var guard = 0;
+      while (dates.length < 30 && guard < 120) {
+        if (wds.indexOf(Store.parseDate(cur).getDay()) >= 0) dates.push(cur);
+        cur = Store.addDays(cur, 1);
+        guard++;
+      }
+    } else if (mode === 'custom') {
+      var n = Math.max(2, +opts.everyN || 2);
+      var c = startDate;
+      while (c <= end && dates.length < 30) {
+        dates.push(c);
+        c = Store.addDays(c, n);
+      }
+    }
+    return dates;
+  }
 
   function openTaskModal(task) {
     state.editingTaskId = task ? task.id : null;
+    state.editingTaskGoalId = task ? (task.goalId || '') : '';
     var t = task || { date: state.planView === 'day' ? state.planDate : Store.todayStr(), energy: 'mid', estimateMin: 30 };
     var goalOpts = '<option value="">选择目标…</option>' + Store.activeGoals().map(function (g) {
       return '<option value="' + g.id + '"' + (t.goalId === g.id ? ' selected' : '') + '>' + esc(g.title) + '</option>';
@@ -1239,9 +1271,26 @@
     var enOpts = Store.ENERGIES.map(function (e) {
       return '<option value="' + e.id + '"' + (t.energy === e.id ? ' selected' : '') + '>' + e.name + '</option>';
     }).join('');
+    var statusOpts = [['todo', '待完成'], ['done', '已完成'], ['partial', '部分完成'], ['missed', '未完成']].map(function (sp) {
+      return '<option value="' + sp[0] + '"' + ((t.status || 'todo') === sp[0] ? ' selected' : '') + '>' + sp[1] + '</option>';
+    }).join('');
+    var repeatOpts = [['once', '单次'], ['daily', '每天'], ['weekly', '每周几'], ['custom', '自定义间隔']].map(function (rp) {
+      return '<option value="' + rp[0] + '"' + (rp[0] === 'once' ? ' selected' : '') + '>' + rp[1] + '</option>';
+    }).join('');
+    var wdChips = [1, 2, 3, 4, 5, 6, 0].map(function (w) {
+      return '<button class="chip" data-action="chip-multi" data-multi="tfwd' + w + '">周' + '日一二三四五六'.charAt(w) + '</button>';
+    }).join('');
     openModal('<h2>' + (task ? '编辑任务' : '手动新增任务') + '</h2>' +
       '<div class="form-item"><label>所属目标 *</label><select id="tf-goal">' + goalOpts + '</select></div>' +
-      '<div class="form-item"><label>日期</label><input type="date" id="tf-date" value="' + esc(t.date) + '"></div>' +
+      '<div class="form-2col">' +
+      '<div class="form-item"><label>' + (task ? '日期' : '开始日期') + '</label><input type="date" id="tf-date" value="' + esc(t.date) + '"></div>' +
+      (task ? '<div class="form-item"><label>状态</label><select id="tf-status">' + statusOpts + '</select></div>'
+            : '<div class="form-item"><label>重复</label><select id="tf-repeat" data-tf="repeat">' + repeatOpts + '</select></div>') +
+      '</div>' +
+      (task ? '' :
+      '<div class="form-item hidden" id="tf-weekly-box"><label>选择星期（可多选）</label><div class="radio-row">' + wdChips + '</div></div>' +
+      '<div class="form-item hidden" id="tf-custom-box"><label>每隔几天重复一次</label><input type="number" id="tf-everyn" value="2" min="2" max="14"></div>' +
+      '<p class="form-hint" id="tf-repeat-hint">单次任务：仅生成所选日期当天的一条</p>') +
       '<div class="form-item"><label>任务标题 *</label><input id="tf-title" value="' + esc(t.title || '') + '" placeholder="例：完成建模第一章习题"></div>' +
       '<div class="form-item"><label>任务描述</label><textarea id="tf-desc" placeholder="怎么做/产出什么（选填）">' + esc(t.desc || '') + '</textarea></div>' +
       '<div class="form-2col">' +
@@ -1253,28 +1302,75 @@
       '<button class="btn primary" data-action="save-task">' + (task ? '保存' : '添加') + '</button></div>');
   }
 
+  /** 重复模式切换：显示对应条件字段并更新生成提示 */
+  function syncRepeatUI() {
+    var mode = $('#tf-repeat') ? $('#tf-repeat').value : 'once';
+    var weeklyBox = $('#tf-weekly-box'), customBox = $('#tf-custom-box'), hint = $('#tf-repeat-hint');
+    if (!hint) return;
+    if (weeklyBox) weeklyBox.classList.toggle('hidden', mode !== 'weekly');
+    if (customBox) customBox.classList.toggle('hidden', mode !== 'custom');
+    if (mode === 'once') { hint.textContent = '单次任务：仅生成所选日期当天的一条'; return; }
+    var goalId = $('#tf-goal') ? $('#tf-goal').value : '';
+    var startDate = $('#tf-date') ? $('#tf-date').value : Store.todayStr();
+    var opts = {
+      weekdays: $$('#modal-box [data-multi]').filter(function (el) {
+        return el.dataset.multi.indexOf('tfwd') === 0 && el.classList.contains('active');
+      }).map(function (el) { return +el.dataset.multi.slice(4); }),
+      everyN: $('#tf-everyn') ? +$('#tf-everyn').value : 2
+    };
+    if (mode === 'weekly' && !opts.weekdays.length) { hint.textContent = '请先选择星期'; return; }
+    var dates = repeatDates(goalId || 'none', startDate, mode, opts);
+    var goal = Store.goalById(goalId);
+    hint.textContent = '将一次性生成 ' + dates.length + ' 条任务（' +
+      (goal && goal.deadline ? '至目标截止 ' + goal.deadline : '最长未来 90 天') + '，上限 30 条），每条可单独编辑删除';
+  }
+
+  /* ---------- 任务表单 ---------- */
+
   function saveTaskFromModal() {
     var goalId = $('#tf-goal').value;
     var title = $('#tf-title').value.trim();
     var date = $('#tf-date').value;
     if (!goalId) { toast('请选择所属目标', true); return; }
     if (!title) { toast('请填写任务标题', true); return; }
-    if (!date) { toast('请选择日期', true); return; }
-    var fields = {
+    if (!date) { toast('请选择开始日期', true); return; }
+    var base = {
       goalId: goalId, date: date, title: title,
       desc: $('#tf-desc').value.trim(),
       energy: $('#tf-energy').value,
-      estimateMin: Store.clamp(+$('#tf-min').value || 30, 5, 600),
-      source: state.editingTaskId ? undefined : 'manual'
+      estimateMin: Store.clamp(+$('#tf-min').value || 30, 5, 600)
     };
     if (state.editingTaskId) {
-      delete fields.source;
-      Store.updateTask(state.editingTaskId, fields);
+      var patch = Object.assign({}, base, { status: $('#tf-status') ? $('#tf-status').value : 'todo' });
+      Store.updateTask(state.editingTaskId, patch);
       toast('任务已更新');
-    } else {
-      Store.addTask(Store.newTask(Object.assign(fields, { source: 'manual', order: 60 })));
-      toast('任务已添加');
+      closeModal();
+      render();
+      return;
     }
+    // 新增：按重复规则批量生成
+    var repeat = $('#tf-repeat') ? $('#tf-repeat').value : 'once';
+    if (repeat === 'once') {
+      Store.addTask(Store.newTask(Object.assign({}, base, { source: 'manual', order: 60 })));
+      toast('任务已添加');
+      closeModal();
+      render();
+      return;
+    }
+    var opts = {
+      weekdays: $$('#modal-box [data-multi]').filter(function (el) {
+        return el.dataset.multi.indexOf('tfwd') === 0 && el.classList.contains('active');
+      }).map(function (el) { return +el.dataset.multi.slice(4); }),
+      everyN: +($('#tf-everyn') ? $('#tf-everyn').value : 2) || 2
+    };
+    if (repeat === 'weekly' && !opts.weekdays.length) { toast('请选择重复的星期', true); return; }
+    var dates = repeatDates(goalId, date, repeat, opts);
+    if (!dates.length) { toast('未能生成任务：请检查开始日期与重复规则', true); return; }
+    var batchId = Store.uid('batch');
+    Store.addTasks(dates.map(function (d) {
+      return Store.newTask(Object.assign({}, base, { date: d, source: 'manual', order: 60, batchId: batchId }));
+    }));
+    toast('已按重复规则生成 ' + dates.length + ' 条任务');
     closeModal();
     render();
   }
@@ -1794,12 +1890,28 @@
     'plan-today': function () { state.planDate = Store.todayStr(); renderPlan(); },
     'plan-view': function (el) { state.planView = el.dataset.view; renderPlan(); },
     'set-range': function (el) { state.rangeDays = +el.dataset.n; renderPlan(); },
-    'plan-pick-weekday': function (el) { state.planDate = el.dataset.date; renderPlan(); },
+    'plan-pick-weekday': function (el) {
+      if (state.planView === 'week') {
+        // 周视图：只做高亮 + 滚动到该天区块（不重渲染，保持滚动位置）
+        $$('#plan-body .week-head button').forEach(function (b) {
+          b.classList.toggle('active', b.dataset.date === el.dataset.date);
+        });
+        var sec = document.getElementById('day-' + el.dataset.date);
+        if (sec) sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        state.planDate = el.dataset.date;
+        return;
+      }
+      state.planDate = el.dataset.date;
+      renderPlan();
+    },
     'add-task': function () { openTaskModal(null); },
     'edit-task': function (el) { openTaskModal(Store.taskById(el.dataset.id)); },
     'menu-edit': function (el) { closeModal(); openTaskModal(Store.taskById(el.dataset.id)); },
-    'menu-move': function (el) { closeModal(); moveTask(el.dataset.id, el.dataset.dir); },
     'task-menu': function (el) { openTaskMenuModal(el.dataset.id); },
+    'menu-goto-goal': function (el) {
+      closeModal();
+      openDetail(el.dataset.goal);
+    },
     'menu-lock': function (el) {
       var t = Store.taskById(el.dataset.id);
       if (!t) return;
@@ -1893,6 +2005,10 @@
     if (t.dataset && t.dataset.filter) {
       state.planFilter[t.dataset.filter] = t.value;
       renderPlan();
+      return;
+    }
+    if (t.id === 'tf-repeat' || t.id === 'tf-goal' || t.id === 'tf-date' || t.id === 'tf-everyn') {
+      syncRepeatUI();
     }
   });
 
