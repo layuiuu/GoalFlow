@@ -152,6 +152,15 @@
         '<button class="btn sm danger" data-action="ai-rebalance" data-scope="global" data-trigger="overload">AI 协调</button></div>';
     }
 
+    // 顶部统计：进首页即见今日总进度
+    var remain = st.todo;
+    html += '<div class="card sum-bar">' +
+      '<div><b>' + st.count + '</b><span>总任务</span></div>' +
+      '<div><b>' + st.plannedMin + '</b><span>预计分钟</span></div>' +
+      '<div><b style="color:var(--ok)">' + (st.done + st.partial) + '</b><span>已完成</span></div>' +
+      '<div><b>' + Math.round(st.rate * 100) + '%</b><span>完成率</span></div>' +
+      '<div><b style="color:var(--brand)">' + remain + '</b><span>剩余</span></div></div>';
+
     // 视图切换
     html += '<div class="chip-row">' +
       '<button class="chip ' + (view === 'smart' ? 'active' : '') + '" data-action="set-view" data-view="smart">⚡ 智能排序</button>' +
@@ -161,19 +170,11 @@
     // 任务列表
     html += taskListHtml(today, view);
 
-    // 汇总条
-    var remain = st.todo;
-    html += '<div class="card sum-bar">' +
-      '<div><b>' + st.count + '</b><span>总任务</span></div>' +
-      '<div><b>' + st.plannedMin + '</b><span>预计分钟</span></div>' +
-      '<div><b style="color:var(--ok)">' + (st.done + st.partial) + '</b><span>已完成</span></div>' +
-      '<div><b>' + Math.round(st.rate * 100) + '%</b><span>完成率</span></div>' +
-      '<div><b style="color:var(--brand)">' + remain + '</b><span>剩余</span></div></div>';
-
     // 复盘卡（今日收尾动作）
     var rv = Store.reviewByDate(today);
     if (rv) {
       html += '<div class="card"><h3>🌙 今日复盘已记录</h3><div class="review-sum">' + reviewSummaryText(rv) + '</div>' +
+        (rv.aiReply ? '<div class="ai-reply"><b>🤖 AI 回应：</b>' + esc(rv.aiReply) + '</div>' : '') +
         '<div class="btn-row" style="margin-top:9px">' +
         '<button class="btn ghost sm" data-action="open-review">编辑复盘</button>' +
         '<button class="btn primary sm" data-action="ai-rebalance" data-scope="global" data-trigger="review">✨ 让 AI 调整计划</button></div></div>';
@@ -188,10 +189,14 @@
 
   function reviewSummaryText(rv) {
     var parts = [];
+    if ((rv.smoothTasks || []).length) parts.push('顺利：<b>' + esc(rv.smoothTasks.join('、').slice(0, 30)) + '</b>');
     if (rv.blocked) parts.push('卡点：<b>' + esc(rv.blocked) + '</b>');
     if (rv.cause && rv.cause !== 'none') {
-      var name = { time: '时间不够', difficulty: '难度超预期', mixed: '时间+难度' }[rv.cause];
-      if (name) parts.push('主要原因：' + name);
+      if (rv.cause === 'custom') parts.push('原因：<b>' + esc(rv.causeCustom || '自定义') + '</b>');
+      else {
+        var name = { time: '时间不够', difficulty: '难度超预期', mixed: '时间+难度' }[rv.cause];
+        if (name) parts.push('主要原因：' + name);
+      }
     }
     var loadTxt = { more: '明天想加量', same: '明日期望保持', less: '明天想减负' }[rv.tomorrowLoad];
     if (loadTxt) parts.push(loadTxt);
@@ -220,7 +225,13 @@
     var goal = Store.goalById(t.goalId) || { title: '已删除目标', type: 'other', isCore: false };
     var ty = Store.typeOf(goal.type), en = Store.energyOf(t.energy);
     var doneCls = (t.status === 'done') ? ' done-state' : '';
-    return '<div class="task-card' + doneCls + '" data-action="open-task-detail" data-id="' + t.id + '">' +
+    // 打卡状态与卡片外观联动：角标 + 左侧色条
+    var stCls = t.status === 'partial' ? ' st-partial' : t.status === 'missed' ? ' st-missed' : '';
+    var badge = '';
+    if (t.status === 'done') badge = '<span class="task-badge ok">✓ 已完成</span>';
+    else if (t.status === 'partial') badge = '<span class="task-badge warn">⚠️ 部分完成</span>';
+    else if (t.status === 'missed') badge = '<span class="task-badge miss">❌ 未完成</span>';
+    return '<div class="task-card' + doneCls + stCls + '" data-action="open-task-detail" data-id="' + t.id + '">' + badge +
       '<div class="task-top">' +
       '<span class="goal-name"><span class="dot" style="background:' + ty.color + '"></span>' + esc(goal.title) + (goal.isCore ? ' ★' : '') + '</span>' +
       '<span class="tag">' + ty.name + '</span>' +
@@ -246,11 +257,17 @@
     render();
   }
 
-  /** 任务详情弹窗（显式保存模式）：draft 暂存 → 保存才写入 Storage */
+  /** 任务详情弹窗（显式保存模式）：三态 + 原因（预设/自定义）→ 保存才写入 Storage */
   function openTaskDetailModal(id) {
     var t = Store.taskById(id);
     if (!t) return;
-    state.taskDraft = { id: id, status: t.status, missReason: t.missReason || '' };
+    state.taskDraft = {
+      id: id,
+      status: t.status,
+      missReason: t.missReason || '',
+      missNote: t.missNote || '',
+      reasonMode: t.missReason === 'custom' ? 'custom' : (t.missReason ? 'preset' : '')
+    };
     renderTaskDetailModal();
   }
 
@@ -260,18 +277,25 @@
     var t = Store.taskById(d.id);
     if (!t) { closeModal(); return; }
     var goal = Store.goalById(t.goalId) || { title: '?', type: 'other' };
-    var statuses = [['done', '✅ 完成'], ['partial', '⚠️ 部分完成'], ['missed', '❌ 未完成'], ['todo', '⚪ 未开始']];
+    // 三个核心状态（未开始 = 未打卡的默认态，不再单列）
+    var statuses = [['done', '✅ 完成'], ['partial', '⚠️ 部分完成'], ['missed', '❌ 未完成']];
     var statusRow = statuses.map(function (s) {
       return '<button class="chip ' + (d.status === s[0] ? 'active' : '') + '" data-action="detail-pick" data-status="' + s[0] + '">' + s[1] + '</button>';
     }).join('');
-    // 状态联动：部分完成 / 未完成 → 显示原因；完成 / 未开始 → 隐藏
+    // 状态联动：部分完成 / 未完成 → 显示原因（预设三个 + 自定义输入）；完成 → 隐藏
     var needReason = d.status === 'partial' || d.status === 'missed';
-    var reasonRow = needReason
-      ? '<div class="form-item" id="detail-reason-box"><label>' + (d.status === 'partial' ? '卡在哪里了？（部分完成原因）' : '未完成原因（帮助 AI 更准地调整）') + '</label><div class="radio-row">' +
-        Store.MISS_REASONS.map(function (r) {
-          return '<button class="chip ' + (d.missReason === r.id ? 'active' : '') + '" data-action="detail-reason" data-reason="' + r.id + '">' + r.name + '</button>';
-        }).join('') + '</div></div>'
-      : '';
+    var reasonRow = '';
+    if (needReason) {
+      var presetChips = Store.MISS_REASONS.map(function (r) {
+        return '<button class="chip ' + (d.reasonMode === 'preset' && d.missReason === r.id ? 'active' : '') + '" data-action="detail-reason" data-reason="' + r.id + '">' + r.name + '</button>';
+      }).join('');
+      var customChip = '<button class="chip ' + (d.reasonMode === 'custom' ? 'active' : '') + '" data-action="detail-reason-custom">＋ 自定义</button>';
+      var customBox = d.reasonMode === 'custom'
+        ? '<input id="detail-reason-input" value="' + esc(d.missNote || '') + '" placeholder="用自己的话写下真实原因">'
+        : '';
+      reasonRow = '<div class="form-item" id="detail-reason-box"><label>' + (d.status === 'partial' ? '卡在哪里了？（部分完成原因）' : '未完成原因（帮助 AI 更准地调整）') + '</label>' +
+        '<div class="radio-row">' + presetChips + customChip + '</div>' + customBox + '</div>';
+    }
     openModal('<h2>' + esc(t.title) + '</h2>' +
       '<p class="card-sub"><span class="dot" style="background:' + Store.typeOf(goal.type).color + '"></span>' + esc(goal.title) +
       ' · ' + t.date + ' 周' + Store.weekdayCN(t.date) + ' · ⏱ ' + t.estimateMin + ' 分钟' +
@@ -292,30 +316,35 @@
     var rv = Store.reviewByDate(today) || {};
     var goals = Store.activeGoals();
     var causeVal = rv.cause || 'none';
+    var causeCustom = rv.causeCustom || '';
     var loadVal = rv.tomorrowLoad || 'same';
-    var smooth = rv.smoothGoalIds || [];
+    var smoothTasks = rv.smoothTasks || [];
+    var todayTasks = Store.tasksByDate(today);
+
+    // 先肯定成果：顺利推进的任务（今日任务，可多选）
+    var smoothChips = todayTasks.length ? todayTasks.map(function (t) {
+      return '<button class="chip ' + (smoothTasks.indexOf(t.title) >= 0 ? 'active' : '') + '" data-action="rv-smooth" data-title="' + esc(t.title) + '">' + esc(t.title.slice(0, 14)) + '</button>';
+    }).join('') : '<p class="form-hint">今天还没有任务</p>';
+    // 再分析问题：卡住的任务（点选填入下方文本）
+    var stuckTasks = todayTasks.filter(function (t) {
+      return t.status === 'missed' || t.status === 'partial' || t.status === 'todo';
+    }).slice(0, 6);
+    var stuckChips = stuckTasks.length ? stuckTasks.map(function (t) {
+      return '<button class="chip" data-action="rv-pick" data-title="' + esc(t.title) + '">' + esc(t.title.slice(0, 12)) + '</button>';
+    }).join('') : '<p class="form-hint">今天没有待处理的任务</p>';
 
     var causeChips = [['none', '没有卡点'], ['time', '时间不够'], ['difficulty', '难度超预期'], ['mixed', '时间+难度都有']]
       .map(function (c) {
         return '<button class="chip ' + (causeVal === c[0] ? 'active' : '') + '" data-action="chip-pick" data-group="cause" data-val="' + c[0] + '">' + c[1] + '</button>';
-      }).join('');
+      }).join('') +
+      '<button class="chip ' + (causeVal === 'custom' ? 'active' : '') + '" data-action="rv-cause-custom">＋ 自定义</button>';
+    var customCauseBox = causeVal === 'custom'
+      ? '<input id="rv-cause-custom" value="' + esc(causeCustom) + '" placeholder="用自己的话描述原因（选填）" style="margin-top:7px">'
+      : '';
     var loadChips = [['more', '多一点'], ['same', '保持'], ['less', '少一点']]
       .map(function (c) {
         return '<button class="chip ' + (loadVal === c[0] ? 'active' : '') + '" data-action="chip-pick" data-group="tomorrow" data-val="' + c[0] + '">' + c[1] + '</button>';
       }).join('');
-    var goalChips = goals.map(function (g) {
-      return '<button class="chip ' + (smooth.indexOf(g.id) >= 0 ? 'active' : '') + '" data-action="chip-multi" data-multi="' + g.id + '">' + esc(g.title) + '</button>';
-    }).join('');
-    // 今日未完成/部分完成的任务：点选快捷填入卡点
-    var stuckTasks = Store.tasksByDate(today).filter(function (t) {
-      return t.status === 'missed' || t.status === 'partial' || t.status === 'todo';
-    }).slice(0, 6);
-    var stuckChips = stuckTasks.length
-      ? '<div class="form-item"><label>哪些任务卡住了？点选快速填入</label><div class="radio-row">' +
-        stuckTasks.map(function (t) {
-          return '<button class="chip" data-action="rv-pick" data-title="' + esc(t.title) + '">' + esc(t.title.slice(0, 12)) + '</button>';
-        }).join('') + '</div></div>'
-      : '';
     var notes = goals.map(function (g) {
       var prev = ((rv.perGoalNotes || []).filter(function (n) { return n.goalId === g.id; })[0]) || {};
       return '<div class="form-item"><label>' + (g.isCore ? '★ ' : '') + esc(g.title) + '（选填）</label>' +
@@ -323,11 +352,11 @@
     }).join('');
 
     openModal('<h2>🌙 今日复盘</h2>' +
-      stuckChips +
+      '<div class="form-item"><label>✅ 今天哪些任务推进顺利？（点选，可多选）</label><div class="radio-row">' + smoothChips + '</div></div>' +
+      '<div class="form-item"><label>⚠️ 哪些任务卡住了？（点选快速填入）</label><div class="radio-row">' + stuckChips + '</div></div>' +
       '<div class="form-item"><label>卡点补充（选填，3 句内即可）</label>' +
       '<textarea id="rv-blocked" placeholder="例：建模的对偶推导卡了 40 分钟">' + esc(rv.blocked || '') + '</textarea></div>' +
-      '<div class="form-item"><label>主要原因是？</label><div class="radio-row" data-pick-group="cause">' + causeChips + '</div></div>' +
-      '<div class="form-item"><label>今天推进顺利的目标（可多选）</label><div class="radio-row">' + goalChips + '</div></div>' +
+      '<div class="form-item"><label>主要原因是？</label><div class="radio-row" data-pick-group="cause">' + causeChips + '</div>' + customCauseBox + '</div>' +
       '<div class="form-item"><label>明天的任务量希望？</label><div class="radio-row" data-pick-group="tomorrow">' + loadChips + '</div></div>' +
       '<details><summary style="font-size:12.5px;color:var(--brand);cursor:pointer;margin-bottom:8px">展开：按目标补充备注（选填）</summary>' + notes + '</details>' +
       '<div class="btn-row"><button class="btn ghost" data-action="close-modal">取消</button>' +
@@ -336,24 +365,48 @@
 
   function saveReviewFromModal() {
     var today = Store.todayStr();
-    var smoothIds = $$('#modal-box [data-multi].active').map(function (el) { return el.dataset.multi; });
+    var smoothTasks = $$('#modal-box [data-action="rv-smooth"].active').map(function (el) { return el.dataset.title; });
     var notes = $$('#modal-box .js-review-note').map(function (inp) {
-      return { goalId: inp.dataset.goal, note: inp.value.trim(), smooth: smoothIds.indexOf(inp.dataset.goal) >= 0 };
-    }).filter(function (n) { return n.note || n.smooth; });
+      return { goalId: inp.dataset.goal, note: inp.value.trim() };
+    }).filter(function (n) { return n.note; });
     var causeEl = $('#modal-box [data-pick-group="cause"]');
     var loadEl = $('#modal-box [data-pick-group="tomorrow"]');
+    var cause = (causeEl && causeEl.dataset.val) || 'none';
+    var causeCustom = cause === 'custom' && $('#rv-cause-custom') ? $('#rv-cause-custom').value.trim() : '';
+    if (cause === 'custom' && !causeCustom) { toast('请填写自定义原因，或改选预设选项', true); return; }
+    var blocked = ($('#rv-blocked') ? $('#rv-blocked').value.trim() : '');
+    var tomorrowLoad = (loadEl && loadEl.dataset.val) || 'same';
     Store.saveReview({
       date: today,
-      blocked: ($('#rv-blocked') ? $('#rv-blocked').value.trim() : ''),
-      cause: (causeEl && causeEl.dataset.val) || 'none',
-      tomorrowLoad: (loadEl && loadEl.dataset.val) || 'same',
-      smoothGoalIds: smoothIds,
+      blocked: blocked,
+      cause: cause,
+      causeCustom: causeCustom,
+      tomorrowLoad: tomorrowLoad,
+      smoothGoalIds: [],
+      smoothTasks: smoothTasks,
       perGoalNotes: notes
     });
     closeModal();
     render();
-    // 闭环：复盘完成 → 自动进入 AI 调整预览
-    toast('复盘已保存，正在生成调整建议…');
+    // 闭环 1：AI 即时反馈（2-3 句短输出，失败静默不阻塞调整）
+    var stats = Agg.dayStats(today);
+    var causeName = cause === 'custom' ? (causeCustom || '自定义')
+      : ({ time: '时间不够', difficulty: '难度超预期', mixed: '时间+难度' }[cause] || '');
+    AI.genReviewFeedback({
+      smoothTasks: smoothTasks,
+      blocked: blocked,
+      causeName: cause === 'none' ? '' : causeName,
+      tomorrowLoad: tomorrowLoad,
+      loadName: tomorrowLoad === 'more' ? '多一点' : tomorrowLoad === 'less' ? '少一点' : '保持',
+      statsText: '完成率 ' + Math.round(stats.rate * 100) + '%' + (stats.over ? '，超载 ' + stats.over + ' 分钟' : ''),
+      goalsText: Store.activeGoals().map(function (g) { return g.title; }).join('、') || '无'
+    }).then(function (res) {
+      var rv = Store.reviewByDate(today);
+      if (rv) { rv.aiReply = res.reply; Store.saveReview(rv); }
+      if (state.page === 'today') renderToday();
+    }).catch(function () { /* 反馈生成失败静默 */ });
+    // 闭环 2：基于复盘的调整建议（预览-确认）
+    toast('复盘已保存，AI 正在生成反馈与调整建议…');
     runAdjust('global', '', 'review');
   }
 
@@ -836,7 +889,7 @@
         '<button class="btn primary" data-action="apply-outline">应用大纲</button></div>');
     }).catch(function (e) {
       closeModal();
-      toast(e.message || '生成失败', true);
+      toast(AI.humanizeError(e), true);
     });
   }
 
@@ -869,7 +922,7 @@
         '<button class="btn primary" data-action="apply-plan"' + (res.tasks.length ? '' : ' disabled') + '>加入计划</button></div>');
     }).catch(function (e) {
       closeModal();
-      toast(e.message || '生成失败', true);
+      toast(AI.humanizeError(e), true);
     });
   }
 
@@ -932,7 +985,7 @@
       showAdjustPreview(norm.invalid);
     }).catch(function (e) {
       closeModal();
-      toast(e.message || 'AI 调用失败', true);
+      toast(AI.humanizeError(e), true);
     });
   }
 
@@ -1541,12 +1594,23 @@
     'task-done': function (el) { taskQuickDone(el.dataset.id); },
     'open-task-detail': function (el) { openTaskDetailModal(el.dataset.id); },
     'detail-pick': function (el) {
-      state.taskDraft.status = el.dataset.status;
-      if (el.dataset.status !== 'missed' && el.dataset.status !== 'partial') state.taskDraft.missReason = '';
+      var d = state.taskDraft;
+      d.status = el.dataset.status;
+      if (d.status !== 'missed' && d.status !== 'partial') {
+        d.missReason = ''; d.missNote = ''; d.reasonMode = '';
+      }
       renderTaskDetailModal();
     },
     'detail-reason': function (el) {
-      state.taskDraft.missReason = el.dataset.reason;
+      var d = state.taskDraft;
+      d.reasonMode = 'preset';
+      d.missReason = el.dataset.reason;
+      renderTaskDetailModal();
+    },
+    'detail-reason-custom': function () {
+      var d = state.taskDraft;
+      d.reasonMode = 'custom';
+      d.missReason = 'custom';
       renderTaskDetailModal();
     },
     'detail-save': function () {
@@ -1554,9 +1618,18 @@
       if (!d) return;
       var patch = { status: d.status };
       if (d.status === 'partial' || d.status === 'missed') {
-        patch.missReason = d.missReason || '';
+        if (d.reasonMode === 'custom') {
+          var note = ($('#detail-reason-input') ? $('#detail-reason-input').value.trim() : '');
+          if (!note) { toast('请填写自定义原因，或改选预设选项', true); return; }
+          patch.missReason = 'custom';
+          patch.missNote = note.slice(0, 60);
+        } else {
+          patch.missReason = d.missReason || '';
+          patch.missNote = '';
+        }
       } else {
         patch.missReason = '';
+        patch.missNote = '';
       }
       Store.updateTask(d.id, patch);
       state.taskDraft = null;
@@ -1572,6 +1645,21 @@
       var box = $('#rv-blocked');
       if (!box) return;
       box.value = box.value ? box.value + '；' + el.dataset.title : el.dataset.title;
+    },
+    'rv-smooth': function (el) { el.classList.toggle('active'); },
+    'rv-cause-custom': function (el) {
+      var group = el.closest('[data-pick-group="cause"]');
+      if (group) { group.dataset.val = 'custom'; }
+      $$('#modal-box [data-action="chip-pick"]').forEach(function (b) {
+        if (b.dataset.group === 'cause') b.classList.remove('active');
+      });
+      el.classList.add('active');
+      var box = $('#rv-cause-custom');
+      if (!box) {
+        group.insertAdjacentHTML('beforeend', '<input id="rv-cause-custom" placeholder="用自己的话描述原因（选填）" style="margin-top:7px">');
+      }
+      var input = $('#rv-cause-custom');
+      if (input) input.focus();
     },
     'open-review': openReviewModal,
     'save-review': saveReviewFromModal,
@@ -1734,7 +1822,7 @@
       toast('正在测试连接…');
       AI.testCall().then(function (r) {
         toast('✅ 连接成功 ' + r.model + ' · ' + r.ms + 'ms');
-      }).catch(function (e) { toast('❌ ' + e.message, true); });
+      }).catch(function (e) { toast('❌ ' + AI.humanizeError(e), true); });
     },
     'clear-usage': function () {
       Store.clearUsage();

@@ -364,10 +364,30 @@ button { font-family: inherit; }
 #today-body > .card:last-child { background: #F8FAFC; border: 1px solid #EDF2F7; }
 
 /* ---------- v1.1 交互补充 ---------- */
-.task-card { cursor: pointer; }
-.st-btn.done-main { border-color: var(--ok); color: #15803d; font-weight: 700; background: #f2fbf6; }
-.st-btn.done-main.on-done { background: #d9f5e4; }
+.task-card { cursor: pointer; position: relative; }
+/* 完成主按钮：未打卡为中性灰白，打卡后才变绿，避免状态歧义 */
+.st-btn.done-main { border-color: var(--line); color: var(--muted); font-weight: 600; background: #fff; }
+.st-btn.done-main.on-done { border-color: var(--ok); background: #d9f5e4; color: #15803d; }
 .st-btn.more-btn { color: var(--muted); }
+
+/* 打卡状态与卡片外观联动：角标 + 左侧色条 */
+.task-badge {
+  position: absolute; top: 10px; right: 10px;
+  font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 999px;
+}
+.task-badge.ok { background: #e7f8ee; color: #15803d; }
+.task-badge.warn { background: #fdf3e0; color: #92600a; }
+.task-badge.miss { background: #fdeaea; color: #b91c1c; }
+.task-card.st-partial { border-left: 3px solid var(--warn); }
+.task-card.st-missed { border-left: 3px solid var(--danger); }
+.task-card.st-missed .task-title { text-decoration: line-through; text-decoration-color: rgba(239, 68, 68, .55); }
+
+/* 复盘 AI 反馈 */
+.ai-reply {
+  margin-top: 9px; padding: 10px 12px; border-radius: 10px;
+  background: var(--brand-weak); color: #2c4bd8; font-size: 13px; line-height: 1.65;
+}
+.ai-reply b { color: var(--brand); }
 
 .step-ind {
   font-size: 12px; color: var(--brand); font-weight: 700;

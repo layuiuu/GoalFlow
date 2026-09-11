@@ -28,7 +28,12 @@
 
   /** 统一请求：出错时抛出带友好 message 的 Error（沿用 project1 providers.js 模式） */
   function request(url, options) {
-    return fetch(url, options).then(function (resp) {
+    var ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, 60000) : null; // 60s 网络超时
+    var opts = Object.assign({}, options);
+    if (ctrl) opts.signal = ctrl.signal;
+    return fetch(url, opts).then(function (resp) {
+      if (timer) clearTimeout(timer);
       return resp.text().then(function (text) {
         var data = null;
         try { data = text ? JSON.parse(text) : null; } catch (e) { /* 非 JSON */ }
@@ -42,6 +47,10 @@
         return data;
       });
     }).catch(function (e) {
+      if (timer) clearTimeout(timer);
+      if (e && e.name === 'AbortError') {
+        throw new Error('请求超时（60 秒）：网络不稳定或模型响应慢，请重试');
+      }
       if (e instanceof TypeError) {
         throw new Error('网络请求失败：可能是网络不通或浏览器跨域(CORS)限制，可在设置中修改 API 地址或填写跨域代理前缀');
       }
@@ -99,10 +108,19 @@
   }
 
   function extractJSON(text) {
-    if (!text) throw new Error('AI 返回内容为空');
+    if (!text) throw new Error('EMPTY_CONTENT');
     var m = text.match(/\{[\s\S]*\}/);
-    if (!m) throw new Error('AI 返回中未找到 JSON');
+    if (!m) throw new Error('NO_JSON');
     return JSON.parse(m[0]);
+  }
+
+  /** 将底层错误转换为用户可读的提示 */
+  function humanizeError(e) {
+    var m = (e && e.message) || '';
+    if (m === 'EMPTY_CONTENT' || m === 'NO_JSON' || m.indexOf('Unexpected token') >= 0 || m.indexOf('JSON') >= 0) {
+      return 'AI 正在休息，这次没有给出有效回复。请稍后再试；若反复出现，建议在设置中把模型换成 deepseek-chat（推理模型容易把输出额度用完）';
+    }
+    return m || 'AI 调用失败，请稍后再试';
   }
 
   /** JSON 请求 + 解析失败自动重试一次 */
@@ -168,7 +186,15 @@
         else if (t.status === 'partial') done += 0.5;
       });
       var missed = tasks.filter(function (t) { return t.status === 'missed'; })
-        .map(function (t) { return t.title; }).slice(0, 3);
+        .map(function (t) {
+          var why = t.missNote || '';
+          if (!why) {
+            for (var k = 0; k < Store.MISS_REASONS.length; k++) {
+              if (Store.MISS_REASONS[k].id === t.missReason) { why = Store.MISS_REASONS[k].name; break; }
+            }
+          }
+          return t.title + (why ? '（原因：' + why + '）' : '');
+        }).slice(0, 3);
       out.push(date + ' 完成率 ' + (total ? Math.round(done / total * 100) : 0) + '%' +
         (missed.length ? '（未完成：' + missed.join('、') + '）' : ''));
     }
@@ -325,7 +351,7 @@
       '2. 高精力任务优先放在周末或工作日靠前位置；任务要具体到可直接执行。',
       '3. date 必须在 ' + dates[0] + ' 至 ' + dates[dates.length - 1] + ' 之间；estimateMin 为 15-240 的整数。'
     ].join('\n');
-    return askJSON(s, 'plan', prompt, 2000).then(function (data) {
+    return askJSON(s, 'plan', prompt, 4000).then(function (data) {
       var list = Array.isArray(data.tasks) ? data.tasks : [];
       if (!list.length) throw new Error('AI 未返回有效任务');
       var tasks = list.map(function (t) {
@@ -525,7 +551,7 @@
     if (useMock()) return mockAdjust(scope, opts);
     var s = Store.loadSettings();
     var built = buildAdjustPrompt(scope, opts);
-    return askJSON(s, 'adjust', built.prompt, 1500).then(function (data) {
+    return askJSON(s, 'adjust', built.prompt, 3000).then(function (data) {
       var list = Array.isArray(data.changes) ? data.changes : [];
       return {
         summary: String(data.summary || ''),
@@ -534,6 +560,44 @@
         context: adjustContext(scope, opts),
         mock: false
       };
+    });
+  }
+
+  /* ---------------- 场景四：复盘反馈 feedback ---------------- */
+
+  function mockFeedback(p) {
+    var parts = [];
+    if (p.smoothTasks.length) {
+      parts.push('很棒，「' + p.smoothTasks[0] + '」等 ' + p.smoothTasks.length + ' 项任务顺利推进，保持这个节奏');
+    } else {
+      parts.push('今天完成了打卡，坚持本身就是最难得的一步');
+    }
+    if (p.blocked) {
+      parts.push('关于「' + p.blocked.slice(0, 14) + '」的卡点，明天会把它拆成更小的一步，并安排在精力最好的时段');
+    }
+    if (p.tomorrowLoad === 'less') parts.push('明天的任务量会适当减轻，先恢复状态');
+    else if (p.tomorrowLoad === 'more') parts.push('明天会为你准备一点进阶挑战');
+    return parts.slice(0, 3).join('。') + '。（Mock 演示）';
+  }
+
+  /** 复盘保存后的即时 AI 反馈（2-3 句，短输出） */
+  function genReviewFeedback(payload) {
+    if (useMock()) {
+      return Promise.resolve({ reply: mockFeedback(payload), mock: true });
+    }
+    var s = Store.loadSettings();
+    var prompt = [
+      '用户刚完成今日复盘。请生成 2-3 句温暖、具体、口语化的中文反馈：先肯定成果，再针对卡点给一句明天可执行的小建议，最后呼应用户对明日期望。不要说教，不要用列表。',
+      '今日完成情况：' + payload.statsText,
+      '顺利推进的任务：' + (payload.smoothTasks.join('、') || '无'),
+      '卡住的任务：' + (payload.blocked || '无') + (payload.causeName ? '（原因：' + payload.causeName + '）' : ''),
+      '明天的任务量期望：' + payload.loadName,
+      '进行中的目标：' + payload.goalsText,
+      '',
+      '只输出 JSON：{"reply":"2-3 句反馈"}'
+    ].join('\n');
+    return askJSON(s, 'feedback', prompt, 600).then(function (data) {
+      return { reply: String(data.reply || '').slice(0, 300), mock: false };
     });
   }
 
@@ -550,6 +614,8 @@
 
   global.AI = {
     useMock: useMock,
+    humanizeError: humanizeError,
+    genReviewFeedback: genReviewFeedback,
     genOutline: genOutline,
     genWeekPlan: genWeekPlan,
     genAdjust: genAdjust,
