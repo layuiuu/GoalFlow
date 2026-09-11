@@ -460,29 +460,41 @@
     state.editingGoalId = goal ? goal.id : null;
     state.goalDraft = goal ? {
       title: goal.title, type: goal.type, deadline: goal.deadline
-    } : { title: '', type: 'study', deadline: Store.addDays(Store.todayStr(), 60) };
+    } : { title: '', type: '', deadline: Store.addDays(Store.todayStr(), 60) };
     renderGoalForm(goal ? 2 : 1, goal);
   }
+
+  /** 非必填字段的示例文案（按目标类型） */
+  var GOAL_EXAMPLES = {
+    study: { base: '会 Python 基础，没系统学过建模', pref: '喜欢视频课+动手练习，晚上效率高' },
+    fitness: { base: '有一定运动习惯，最近停了', pref: '喜欢跑步+力量，早上有空' },
+    skill: { base: '能看懂，开口难，没系统练过', pref: '通勤时间可以练，喜欢跟读' },
+    reading: { base: '平时偶尔看书，一个月不到一本', pref: '喜欢纸质书，睡前阅读半小时' },
+    other: { base: '刚起步，还没头绪', pref: '碎片时间为主，周末更充裕' }
+  };
 
   function renderGoalForm(step, goal) {
     state.goalFormStep = step;
     var g = goal || {};
     var d = state.goalDraft || {};
-    var step1 =
-      '<div class="step-ind">第 1 步 / 共 2 步 · 先告诉 AI 目标是什么</div>' +
+    var typeOpts = function (selected) {
+      return '<option value=""' + (selected ? '' : ' hidden') + '>请选择</option>' +
+        Store.GOAL_TYPES.map(function (t) {
+          return '<option value="' + t.id + '"' + (selected === t.id ? ' selected' : '') + '>' + t.name + '</option>';
+        }).join('');
+    };
+    // 第 1 步字段（目标是什么）——唯一的目标描述输入框
+    var step1Fields =
       '<div class="form-item"><label>目标描述 *</label>' +
       '<input id="gf-title" value="' + esc(d.title || '') + '" placeholder="例：两个月准备数学建模竞赛"></div>' +
       '<div class="form-2col">' +
-      '<div class="form-item"><label>目标类型</label><select id="gf-type">' +
-      Store.GOAL_TYPES.map(function (t) {
-        return '<option value="' + t.id + '"' + ((d.type || 'study') === t.id ? ' selected' : '') + '>' + t.name + '</option>';
-      }).join('') + '</select></div>' +
+      '<div class="form-item"><label>目标类型 *</label><select id="gf-type">' + typeOpts(d.type || '') + '</select></div>' +
       '<div class="form-item"><label>截止时间 *</label><input type="date" id="gf-deadline" value="' + esc(d.deadline || Store.addDays(Store.todayStr(), 60)) + '"></div>' +
-      '</div>' +
+      '</div>';
+    var step1 =
+      '<div class="step-ind">第 1 步 / 共 2 步 · 先告诉 AI 目标是什么</div>' +
+      step1Fields +
       '<button class="btn primary block" data-action="goal-step-next">下一步：投入与约束 →</button>';
-    var tyOptsFull = Store.GOAL_TYPES.map(function (t) {
-      return '<option value="' + t.id + '"' + ((d.type || 'study') === t.id ? ' selected' : '') + '>' + t.name + '</option>';
-    }).join('');
     var prChips = Store.PRIORITIES.map(function (p) {
       return '<button class="chip ' + ((g.priority || Store.loadSettings().defaultPriority) === p.id ? 'active' : '') + '" data-action="chip-pick" data-group="prio" data-val="' + p.id + '">' + p.name + '</button>';
     }).join('');
@@ -493,24 +505,31 @@
       '<div class="form-item"><label>周末可用（分钟）</label><input type="number" id="gf-weekend" class="js-goal-min" min="0" step="10" value="' + (g.weekendMinutes != null ? g.weekendMinutes : 90) + '"></div>' +
       '</div>' +
       '<p class="form-hint" id="gf-budget-hint"></p>' +
-      '<div class="form-item"><label>当前基础</label><textarea id="gf-base" placeholder="例：会 Python 基础，没系统学过建模">' + esc(g.base || '') + '</textarea></div>' +
-      '<div class="form-item"><label>个人偏好</label><textarea id="gf-pref" placeholder="例：喜欢视频课+动手练习，晚上效率高">' + esc(g.preferences || '') + '</textarea></div>' +
+      '<div class="form-item"><div class="label-row"><label>当前基础 (选填)</label>' +
+      '<button class="chip xs" data-action="gf-example" data-target="gf-base">💡 示例</button></div>' +
+      '<textarea id="gf-base" placeholder="例：会 Python 基础，没系统学过建模">' + esc(g.base || '') + '</textarea></div>' +
+      '<div class="form-item"><div class="label-row"><label>个人偏好 (选填)</label>' +
+      '<button class="chip xs" data-action="gf-example" data-target="gf-pref">💡 示例</button></div>' +
+      '<textarea id="gf-pref" placeholder="例：喜欢视频课+动手练习，晚上效率高">' + esc(g.preferences || '') + '</textarea></div>' +
       '<div class="form-item"><label>优先级</label><div class="radio-row" data-pick-group="prio">' + prChips + '</div></div>' +
       '<div class="form-item check-row"><input type="checkbox" id="gf-core"' + (g.isCore ? ' checked' : '') + '>' +
       '<label for="gf-core" style="margin:0">设为核心目标 ★（最多 2 个，资源冲突时优先保障）</label></div>' +
       '<div class="btn-row">' +
       (goal ? '' : '<button class="btn ghost" data-action="goal-step-back">← 上一步</button>') +
       '<button class="btn primary" data-action="save-goal">' + (goal ? '保存修改' : '创建目标') + '</button></div>';
-    var step1Fields = '<div class="form-2col">' +
-      '<div class="form-item"><label>目标类型</label><select id="gf-type">' + tyOptsFull + '</select></div>' +
-      '<div class="form-item"><label>截止时间 *</label><input type="date" id="gf-deadline" value="' + esc(d.deadline || '') + '"></div>' +
-      '</div>';
     openModal('<h2>' + (goal ? '编辑目标' : '新建目标') + '</h2>' +
-      '<div class="form-item"><label>目标描述 *</label>' +
-      '<input id="gf-title" value="' + esc(d.title || '') + '" placeholder="例：两个月准备数学建模竞赛"></div>' +
-      (step === 1 ? '' : step1Fields) +
       (step === 1 ? step1 : step2));
     if (step === 2) goalBudgetHint();
+  }
+
+  /** 💡示例：按当前所选目标类型填入示例文案 */
+  function fillGoalExample(target) {
+    var type = ($('#gf-type') && $('#gf-type').value) || (state.goalDraft && state.goalDraft.type) || 'other';
+    var ex = GOAL_EXAMPLES[type] || GOAL_EXAMPLES.other;
+    var input = $('#' + target);
+    if (!input) return;
+    input.value = target === 'gf-base' ? ex.base : ex.pref;
+    toast('已填入示例，可自由修改');
   }
 
   /** 在步骤切换前把当前表单值收进草稿，避免丢失 */
@@ -527,6 +546,7 @@
     var title = draft.title;
     var deadline = draft.deadline;
     if (!title) { toast('请填写目标描述', true); return; }
+    if (!draft.type) { toast('请选择目标类型', true); return; }
     if (!deadline) { toast('请选择截止时间', true); return; }
     var isCore = $('#gf-core').checked;
     var coreCount = Store.activeGoals().filter(function (g) { return g.isCore && g.id !== state.editingGoalId; }).length;
@@ -535,7 +555,7 @@
     var fields = {
       title: title,
       description: title,
-      type: draft.type || 'study',
+      type: draft.type,
       deadline: deadline,
       weekdayMinutes: Store.clamp(+$('#gf-weekday').value || 0, 0, 720),
       weekendMinutes: Store.clamp(+$('#gf-weekend').value || 0, 0, 720),
@@ -605,39 +625,53 @@
       '当前基础：' + (g.base ? esc(g.base) : '<span style="color:var(--faint)">未填写</span>') + '<br>' +
       '个人偏好：' + (g.preferences ? esc(g.preferences) : '<span style="color:var(--faint)">未填写</span>') + '</div></div>';
 
-    // 阶段大纲
+    // 阷段大纲（里程碑：阶段名称 + 关键节点目标 + 起止时间 + 进度勾选）
     html += '<div class="card"><h3>阶段大纲</h3>';
     if ((g.milestones || []).length) {
+      var curMs = Rules.currentMilestone(g);
       g.milestones.forEach(function (m, i) {
-        html += '<div class="milestone ' + (m.done ? 'done' : '') + '">' +
+        var start = m.startDate || (i === 0
+          ? Store.fmtDate(new Date(g.createdAt || Date.now()))
+          : Store.addDays(g.milestones[i - 1].targetDate, 1));
+        var isCur = curMs === m;
+        html += '<div class="milestone ' + (m.done ? 'done' : '') + (isCur ? ' current' : '') + '">' +
           '<div class="ms-check" data-action="toggle-milestone" data-index="' + i + '">' + (m.done ? '✓' : '') + '</div>' +
-          '<div style="flex:1"><p class="ms-title">' + esc(m.title) + '</p>' +
-          (m.detail ? '<p class="ms-detail">' + esc(m.detail) + '</p>' : '') +
-          '<span class="ms-date">至 ' + m.targetDate + '</span></div></div>';
+          '<div style="flex:1;min-width:0"><p class="ms-title">' + esc(m.title) +
+          (isCur ? ' <span class="tag" style="background:var(--brand-weak);color:var(--brand)">进行中</span>' : '') + '</p>' +
+          (m.detail ? '<p class="ms-detail">🎯 ' + esc(m.detail) + '</p>' : '') +
+          '<span class="ms-date">' + start.slice(5) + ' – ' + m.targetDate.slice(5) + '</span></div></div>';
       });
       html += '<button class="btn ghost sm" data-action="gen-outline" data-id="' + g.id + '" style="margin-top:8px">🔄 让 AI 重新生成大纲</button>';
     } else {
-      html += '<p class="card-sub">还没有阶段大纲。AI 会先把目标拆成 3-6 个阶段，再逐周展开成每日任务（省 Token 且灵活）。</p>' +
+      html += '<p class="card-sub">还没有阶段大纲。AI 会先把目标拆成 3-6 个阶段（含起止时间与关键节点目标），再逐周展开成每日任务（省 Token 且灵活）。</p>' +
         '<button class="btn primary sm" data-action="gen-outline" data-id="' + g.id + '">✨ AI 生成阶段大纲</button>';
     }
     html += '</div>';
 
-    // 固定任务（RepeatRule）
-    html += '<div class="card"><h3>固定任务（本地生成，不耗 AI）</h3>';
+    // 自定义日常任务（RepeatRule 本地生成，不耗 AI）
+    html += '<div class="card"><h3>自定义日常任务 <span class="tag">本地生成 · 不耗 AI</span></h3>';
     if ((g.repeatRules || []).length) {
       g.repeatRules.forEach(function (r, i) {
-        html += '<div class="log-item"><div class="log-head"><span>' + esc(r.titleTpl || '固定任务') +
+        html += '<div class="log-item"><div class="log-head"><span>🔒 ' + esc(r.titleTpl || '固定任务') +
           ' · ' + fmtMin(r.minutes) + '</span>' +
           '<button class="icon-btn" style="color:var(--danger)" data-action="del-rule" data-goal="' + g.id + '" data-index="' + i + '">删除</button></div>' +
           '<p class="log-summary">' + ruleDesc(r) + '</p></div>';
       });
     } else {
-      html += '<p class="card-sub">如「每天练 30 分钟口语」这类每天都要做的任务，用固定规则自动生成，不消耗 AI Token。</p>';
+      html += '<p class="card-sub">如「每天练 30 分钟口语」这类每天都要做的任务，在这里定义规则后每天自动生成，不消耗 AI Token。</p>';
     }
-    html += '<button class="btn ghost sm" data-action="add-rule" data-id="' + g.id + '" style="margin-top:6px">＋ 添加固定任务</button></div>';
+    html += '<button class="btn ghost sm" data-action="add-rule" data-id="' + g.id + '" style="margin-top:6px">＋ 添加日常任务</button></div>';
 
-    // 任务列表（按日期倒序）
-    html += '<div class="card"><h3>每日任务</h3>';
+    // 每日任务（按日期倒序 + 逐条可编辑 + AI 规划/调整整合入口）
+    var futureTodo = tasks.filter(function (t) {
+      return t.date >= Store.todayStr() && t.status === 'todo';
+    }).length;
+    html += '<div class="card"><div class="card-head-row"><h3>每日任务</h3>' +
+      '<button class="btn primary sm" data-action="ai-plan-or-adjust" data-id="' + g.id + '">' +
+      (futureTodo ? '✨ AI 规划/调整' : '✨ AI 生成任务') + '</button></div>' +
+      '<p class="form-hint" style="margin:-2px 0 8px">' + (futureTodo
+        ? '已有 ' + futureTodo + ' 个未来任务，点右上角可让 AI 结合负荷优化重排'
+        : '当前没有未来任务，点右上角让 AI 生成未来 7 天的每日任务') + '</p>';
     var byDate = {};
     tasks.forEach(function (t) { (byDate[t.date] = byDate[t.date] || []).push(t); });
     var dates = Object.keys(byDate).sort().reverse().slice(0, 14);
@@ -647,12 +681,14 @@
       dates.forEach(function (d) {
         html += '<div class="group-title">' + d + ' 周' + Store.weekdayCN(d) + (d === Store.todayStr() ? ' · 今天' : '') + '</div>';
         byDate[d].forEach(function (t) {
-          html += '<div class="log-item"><div class="log-head"><span>' + esc(t.title) + '</span>' +
-            '<span class="scope">' + Store.TASK_STATUS[t.status].icon + ' ' + t.estimateMin + '分钟</span></div></div>';
+          html += '<div class="log-item"><div class="log-head">' +
+            '<span>' + (t.source === 'rule' || t.locked ? '🔒 ' : '') + esc(t.title) + '</span>' +
+            '<span class="scope"><span class="tag">' + Store.TASK_STATUS[t.status].name + '</span> ' + t.estimateMin + '分钟 ' +
+            '<a href="javascript:void(0)" data-action="task-menu" data-id="' + t.id + '" style="color:var(--brand);font-weight:700">⋯</a></span></div></div>';
         });
       });
       var futureCount = tasks.filter(function (t) { return t.date > dates[0]; }).length;
-      if (futureCount > 0) html += '<p class="form-hint">仅显示最近 14 天，更早/更晚的任务见计划页</p>';
+      if (futureCount > 0) html += '<p class="form-hint">仅显示最近 14 天，更早/更晚的任务见计划页；点任务右侧 ⋓ 可修改名称、时长、日期或删除</p>';
     }
     html += '</div>';
 
@@ -660,18 +696,12 @@
     var logs = Store.getLogs().filter(function (l) { return l.scope === 'goal' && l.goalId === g.id; }).slice(0, 5);
     html += '<div class="card"><h3>AI 调整历史</h3>' + logsHtml(logs, true) + '</div>';
 
-    // 操作按钮
-    html += '<div class="btn-row">' +
-      '<button class="btn primary" data-action="expand-week" data-id="' + g.id + '">✨ AI 展开未来 7 天</button>' +
-      '<button class="btn ghost" data-action="edit-goal">编辑</button></div>';
+    // 操作按钮（编辑统一走右上角入口；AI 生成/调整整合进「每日任务」卡右上角）
     html += '<div class="btn-row">' + (g.status === 'paused'
       ? '<button class="btn ok" data-action="resume-goal">恢复目标</button>'
       : '<button class="btn ghost" data-action="pause-goal">暂停</button>') +
       '<button class="btn ghost" data-action="archive-goal">' + (g.status === 'archived' ? '取消归档' : '归档') + '</button>' +
       '<button class="btn danger" data-action="delete-goal">删除</button></div>';
-    if (g.status === 'active' && !g.isCore) {
-      html += '<div class="btn-row"><button class="btn ghost block" data-action="adjust-goal" data-id="' + g.id + '">🔧 让 AI 调整此目标</button></div>';
-    }
 
     el.innerHTML = html;
   }
@@ -1561,6 +1591,7 @@
       }
     },
     'chip-multi': function (el) { el.classList.toggle('active'); },
+    'gf-example': function (el) { fillGoalExample(el.dataset.target); },
 
     /* 目标 */
     'goal-filter': function (el) { state.goalFilter = el.dataset.id; renderGoals(); },
@@ -1568,6 +1599,7 @@
     'goal-step-next': function () {
       var d = stashGoalDraft();
       if (!d.title) { toast('请先填写目标描述', true); return; }
+      if (!d.type) { toast('请选择目标类型', true); return; }
       if (!d.deadline) { toast('请先选择截止时间', true); return; }
       renderGoalForm(2, state.editingGoalId ? Store.goalById(state.editingGoalId) : null);
     },
@@ -1637,6 +1669,17 @@
       renderDetail();
     },
     'adjust-goal': function (el) { runAdjust('goal', el.dataset.id, 'manual'); },
+    /** AI 规划/调整整合入口：无未来任务 → 生成；已有未来任务 → 优化重排 */
+    'ai-plan-or-adjust': function (el) {
+      var gid = el.dataset.id;
+      var g = Store.goalById(gid);
+      if (!g) return;
+      var future = Store.tasksWhere(function (t) {
+        return t.goalId === gid && t.date >= Store.todayStr() && t.status === 'todo';
+      }).length;
+      if (future) runAdjust('goal', gid, 'manual');
+      else expandWeekFor(gid);
+    },
 
     /* 计划 */
     'plan-prev': function () { state.planDate = Store.addDays(state.planDate, state.planView === 'week' ? -7 : -1); renderPlan(); },

@@ -388,9 +388,28 @@ button { font-family: inherit; }
 .detail-status-row .chip { padding: 7px 13px; font-size: 13px; }
 .detail-status-row .chip.active { background: var(--brand); border-color: var(--brand); color: #fff; }
 
-/* AI 调整预览页：整体高于 tabbar（底部操作按钮不被遮挡） */
+/* AI 荃整预览页：整体高于 tabbar（底部操作按钮不被遮挡） */
 #adjust-preview { z-index: 80; }
 #adjust-preview .page-body { padding-bottom: 110px; }
+
+/* ---------- v1.4 表单与详情页交互 ---------- */
+.card-head-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin-bottom: 6px;
+}
+.card-head-row h3 { margin: 0; }
+.label-row {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 4px;
+}
+.label-row label { margin: 0; }
+.chip.xs { padding: 2px 9px; font-size: 11px; border-radius: 999px; }
+.milestone.current {
+  border-left: 3px solid var(--brand);
+  padding-left: 10px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, rgba(42, 106, 255, .05), transparent);
+}
 
 /* ---------- AI 调整预览页 ---------- */
 .ap-footer {

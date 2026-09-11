@@ -144,7 +144,7 @@
     ];
     if ((goal.milestones || []).length) {
       var ms = goal.milestones.map(function (m) {
-        return '- ' + m.title + '（至 ' + m.targetDate + (m.done ? '，已完成' : '') + '）' + (m.detail ? '：' + m.detail : '');
+        return '- ' + m.title + '（' + (m.startDate ? m.startDate + ' 至 ' : '') + m.targetDate + (m.done ? '，已完成' : '') + '）' + (m.detail ? '：' + m.detail : '');
       });
       lines.push('阶段大纲：\n' + ms.join('\n'));
     }
@@ -210,10 +210,14 @@
     var n = tpl.length;
     var milestones = tpl.map(function (title, i) {
       var seg = Math.round(span * (i + 1) / n);
+      var segStart = i === 0 ? today : Store.addDays(today, Math.round(span * i / n) + 1);
       return {
+        id: Store.uid('ms'),
         title: title,
         detail: details[goal.type] || details.other,
-        targetDate: Store.addDays(today, Math.min(seg, span))
+        startDate: segStart,
+        targetDate: Store.addDays(today, Math.min(seg, span)),
+        done: false
       };
     });
     return Promise.resolve({
@@ -231,10 +235,10 @@
       goalBrief(goal),
       '',
       '只输出 JSON，格式：',
-      '{"milestones":[{"title":"阶段名(4-12字)","detail":"这个阶段做什么、产出是什么(40字内)","targetDate":"YYYY-MM-DD"}],"advice":"一句话总体建议"}',
-      '要求：targetDate 从今天起递增，第一个在 7 天内，最后一个不超过截止日期；阶段划分要贴合目标类型与剩余天数。'
+      '{"milestones":[{"title":"阶段名(4-12字)","detail":"这个阶段的关键节点目标：要达成什么、产出是什么(40字内)","startDate":"YYYY-MM-DD","targetDate":"YYYY-MM-DD"}],"advice":"一句话总体建议"}',
+      '要求：startDate 与 targetDate 从今天起递增、各阶段时间首尾衔接不重叠、第一个 startDate 为今天、最后一个 targetDate 不超过截止日期；阶段划分要贴合目标类型与剩余天数。'
     ].join('\n');
-    return askJSON(s, 'outline', prompt, 1200).then(function (data) {
+    return askJSON(s, 'outline', prompt, 1600).then(function (data) {
       var list = Array.isArray(data.milestones) ? data.milestones : [];
       if (!list.length) throw new Error('AI 未返回有效的阶段大纲');
       var today = Store.todayStr();
@@ -242,9 +246,24 @@
         var d = dateNorm(m.targetDate, Store.addDays(today, (i + 1) * 7));
         if (d > goal.deadline) d = goal.deadline;
         if (d < today) d = Store.addDays(today, (i + 1) * 3);
-        return { title: String(m.title || ('阶段' + (i + 1))).slice(0, 30), detail: String(m.detail || ''), targetDate: d, done: false };
+        var sd = dateNorm(m.startDate, '');
+        return {
+          id: Store.uid('ms'),
+          title: String(m.title || ('阶段' + (i + 1))).slice(0, 30),
+          detail: String(m.detail || ''),
+          startDate: sd,
+          targetDate: d,
+          done: false
+        };
       });
       milestones.sort(function (a, b) { return a.targetDate < b.targetDate ? -1 : 1; });
+      // 起止时间补全：缺失的按上一阶段结束次日推导
+      for (var i = 0; i < milestones.length; i++) {
+        if (!milestones[i].startDate) {
+          milestones[i].startDate = i === 0 ? today : Store.addDays(milestones[i - 1].targetDate, 1);
+        }
+        if (milestones[i].startDate > milestones[i].targetDate) milestones[i].startDate = milestones[i].targetDate;
+      }
       return { milestones: milestones, advice: String(data.advice || ''), mock: false };
     });
   }
