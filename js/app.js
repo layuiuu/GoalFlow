@@ -462,12 +462,24 @@
   function goalCard(g) {
     var tasks = Store.tasksWhere(function (t) { return t.goalId === g.id; });
     var prog = Rules.milestoneProgress(g, tasks);
-    var pct = Math.round(prog.overall * 100);
+    var pct = Math.round(prog.overall * 100); // 整体进度（与详情页一致）
     var ty = Store.typeOf(g.type), pr = Store.prioOf(g.priority);
     var today = Store.todayStr();
-    var futureCount = tasks.filter(function (t) { return t.date >= today && t.status === 'todo'; }).length;
-    var eta = Agg.goalStats(g).eta;
-    var etaTxt = eta && eta >= today ? '<span>🏁 预计 ' + eta.slice(5) + ' 完成</span>' : '';
+    // 当前阶段信息（阶段名 / 剩余任务 / 预计结束 / 阶段内进度）
+    var stage = Rules.currentStageInfo(g, tasks);
+    var stageMeta = '', stageBar = '';
+    if (stage) {
+      stageMeta = '<span>🧭 当前阶段：' + esc(stage.name) + ' · 剩余 ' + stage.remaining + ' 任务 · 预计 ' + stage.targetDate.slice(5) + ' 结束</span>';
+      stageBar = '<div class="bar-row" style="margin-top:5px">' +
+        '<span style="min-width:56px;white-space:nowrap">本阶段</span>' +
+        '<div class="bar"><i style="width:' + stage.stagePct + '%;background:' + ty.color + '"></i></div>' +
+        '<span class="val">' + stage.stagePct + '%</span></div>';
+    } else {
+      var futureCount = tasks.filter(function (t) { return t.date >= today && t.status === 'todo'; }).length;
+      stageMeta = futureCount ? '<span>📋 未来 ' + futureCount + ' 个任务</span>' : '<span style="color:var(--faint)">暂无排期</span>';
+      var eta = Agg.goalStats(g).eta;
+      if (eta && eta >= today) stageMeta += '<span>🏁 预计 ' + eta.slice(5) + ' 完成</span>';
+    }
     return '<div class="card goal-card" data-action="open-detail" data-id="' + g.id + '">' +
       '<div class="goal-ring" style="background:conic-gradient(' + ty.color + ' ' + pct + '%, #e9edf7 0)">' +
       '<i style="background:#fff;width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center">' + pct + '%</i></div>' +
@@ -477,10 +489,10 @@
       '<span><span class="dot" style="background:' + ty.color + '"></span>' + ty.name + '</span>' +
       '<span style="color:' + pr.color + '">优先级 ' + pr.name + '</span>' +
       '<span>📅 ' + fmtDeadline(g.deadline) + '</span>' +
-      (futureCount ? '<span>📋 未来 ' + futureCount + ' 个任务</span>' : '<span style="color:var(--faint)">暂无排期</span>') +
-      etaTxt +
+      stageMeta +
       (g.status !== 'active' ? '<span class="tag">' + Store.GOAL_STATUS[g.status].name + '</span>' : '') +
-      '</div></div></div>';
+      '</div>' + stageBar +
+      '</div></div>';
   }
 
   /* ---------- 目标表单 ---------- */
@@ -668,8 +680,8 @@
       '<span class="tag">📅 ' + g.deadline + ' · ' + fmtDeadline(g.deadline) + '</span>' +
       '<span class="tag">' + Store.GOAL_STATUS[g.status].name + '</span></div>' +
       '<div class="stat-grid">' +
-      '<div class="cell" style="box-shadow:none;background:var(--bg)"><b>' + Math.round(prog.taskRate * 100) + '%</b><span>任务完成率</span></div>' +
-      '<div class="cell" style="box-shadow:none;background:var(--bg)"><b>' + Math.round(prog.overall * 100) + '%</b><span>整体进度</span></div>' +
+      '<div class="cell" style="box-shadow:none;background:var(--bg)"><b>' + Math.round(prog.taskRate * 100) + '%<span class="info-i" data-action="info-rate">ⓘ</span></b><span>任务完成率</span></div>' +
+      '<div class="cell" style="box-shadow:none;background:var(--bg)"><b>' + Math.round(prog.overall * 100) + '%<span class="info-i" data-action="info-overall">ⓘ</span></b><span>整体进度</span></div>' +
       '<div class="cell" style="box-shadow:none;background:var(--bg)"><b>' + Math.max(0, Store.daysBetween(Store.todayStr(), g.deadline)) + '</b><span>剩余天数</span></div>' +
       '</div></div>';
 
@@ -1729,6 +1741,12 @@
         closeDetail();
         toast('目标已删除');
       });
+    },
+    'info-rate': function () {
+      toast('完成率 = 已到期任务的已完成时长 ÷ 已到期任务总时长（部分完成按一半计）');
+    },
+    'info-overall': function () {
+      toast('整体进度 = 已完成任务时长 ÷ 目标已生成任务总时长；无任务时按已完成阶段数 ÷ 总阶段数');
     },
     'toggle-milestone': function (el) {
       var g = Store.goalById(state.detailId);

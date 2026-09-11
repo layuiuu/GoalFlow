@@ -72,31 +72,82 @@
    * - overall：有大纲时两者各占 50%，否则等于 taskRate
    */
   function milestoneProgress(goal, tasks) {
-    var done = 0, total = 0;
+    // 口径说明（详情页 ⓘ 展示）：
+    // 任务完成率 = 已到期任务的已完成时长 ÷ 已到期任务总时长（部分完成按一半计）
+    // 整体进度   = 已完成任务的时长 ÷ 目标已生成任务的总时长；无任务时按已完成阶段数 ÷ 总阶段数
     var today = Store.todayStr();
+    var dueMin = 0, dueDoneMin = 0;      // 已到期（含今天）任务
+    var allMin = 0, allDoneMin = 0;      // 全部已生成任务（含未来）
+    var total = 0;
     for (var i = 0; i < tasks.length; i++) {
       var t = tasks[i];
       if (t.status === 'skipped') continue;
-      if (t.date > today) continue; // 未来任务不计入完成率，避免稀释
-      total++;
-      if (t.status === 'done') done += 1;
-      else if (t.status === 'partial') done += 0.5;
+      var min = +t.estimateMin || 0;
+      var credit = t.status === 'done' ? min : (t.status === 'partial' ? min * 0.5 : 0);
+      allMin += min;
+      allDoneMin += credit;
+      if (t.date <= today) {
+        total++;
+        dueMin += min;
+        dueDoneMin += credit;
+      }
     }
-    var taskRate = total ? done / total : 0;
+    var taskRate = dueMin ? dueDoneMin / dueMin : 0;
 
     var ms = goal.milestones || [];
     var msDone = 0;
     for (var m = 0; m < ms.length; m++) if (ms[m].done) msDone++;
     var msRate = ms.length ? msDone / ms.length : 0;
 
-    var overall = ms.length ? taskRate * 0.5 + msRate * 0.5 : taskRate;
+    var overall = allMin ? allDoneMin / allMin : msRate;
     return {
       taskRate: taskRate,
       taskTotal: total,
+      doneMin: dueDoneMin,
+      dueMin: dueMin,
+      allMin: allMin,
+      allDoneMin: allDoneMin,
       milestoneRate: msRate,
       milestoneDone: msDone,
       milestoneTotal: ms.length,
       overall: overall
+    };
+  }
+
+  /** 当前阶段信息（目标列表卡展示用）：阶段名 / 剩余任务数 / 预计结束日 / 阶段内完成进度 */
+  function currentStageInfo(goal, tasks) {
+    var cur = currentMilestone(goal);
+    if (!cur) return null;
+    var today = Store.todayStr();
+    var start = cur.startDate || (goal.milestones && goal.milestones.indexOf(cur) === 0
+      ? Store.fmtDate(new Date(goal.createdAt || Date.now()))
+      : '');
+    var stageMin = 0, stageDoneMin = 0, remaining = 0;
+    for (var i = 0; i < tasks.length; i++) {
+      var t = tasks[i];
+      if (t.status === 'skipped') continue;
+      var inStage = t.date >= start && t.date <= cur.targetDate;
+      var min = +t.estimateMin || 0;
+      if (inStage && t.status === 'todo') remaining++;
+      if (inStage) {
+        stageMin += min;
+        if (t.status === 'done') stageDoneMin += min;
+        else if (t.status === 'partial') stageDoneMin += min * 0.5;
+      }
+    }
+    if (remaining === 0) {
+      // 阶段区间没有未来任务时，退化为全部未来任务
+      for (var j = 0; j < tasks.length; j++) {
+        var t2 = tasks[j];
+        if (t2.status === 'todo' && t2.date >= today) remaining++;
+      }
+    }
+    return {
+      name: cur.title,
+      startDate: start,
+      targetDate: cur.targetDate,
+      remaining: remaining,
+      stagePct: stageMin ? Math.round(stageDoneMin / stageMin * 100) : 0
     };
   }
 
@@ -113,6 +164,7 @@
     ruleApplies: ruleApplies,
     ensureRange: ensureRange,
     milestoneProgress: milestoneProgress,
-    currentMilestone: currentMilestone
+    currentMilestone: currentMilestone,
+    currentStageInfo: currentStageInfo
   };
 })(window);

@@ -225,11 +225,11 @@
       other: ['摸底准备', '推进执行', '查漏补缺', '收尾验收']
     }[goal.type] || ['摸底准备', '推进执行', '查漏补缺', '收尾验收'];
     var details = {
-      study: '梳理核心概念与方法，完成对应练习并整理笔记',
-      fitness: '按计划完成训练并记录身体数据与感受',
-      skill: '围绕阶段目标做刻意练习，保留练习记录',
-      reading: '完成阅读并输出笔记或摘要',
-      other: '推进阶段任务并记录进展'
+      study: ['梳理核心概念与方法，建立知识框架', '针对薄弱专题集中训练并整理错题', '完整实战演练，限时完成成套任务', '查漏补缺，复盘沉淀方法与模板'],
+      fitness: ['完成体能基线自测，建立运动习惯', '逐步加量，掌握标准动作模式', '提升强度并稳定输出，关注恢复', '对照基线复测，固化训练计划'],
+      skill: ['建立练习习惯，熟悉基础材料', '刻意练习薄弱环节并录音复盘', '综合运用，完成完整输出', '输出作品并总结方法'],
+      reading: ['通读全书，标记重点章节', '精读重点并整理笔记', '延伸主题阅读与对照', '输出总结与行动清单'],
+      other: ['摸底并明确阶段目标', '持续推进核心任务', '查漏补缺，调整方法', '收尾验收并沉淀经验']
     };
     var today = Store.todayStr();
     var span = Math.max(7, Store.daysBetween(today, goal.deadline));
@@ -237,10 +237,11 @@
     var milestones = tpl.map(function (title, i) {
       var seg = Math.round(span * (i + 1) / n);
       var segStart = i === 0 ? today : Store.addDays(today, Math.round(span * i / n) + 1);
+      var dl = details[goal.type] || details.other;
       return {
         id: Store.uid('ms'),
         title: title,
-        detail: details[goal.type] || details.other,
+        detail: Array.isArray(dl) ? dl[i % dl.length] : dl,
         startDate: segStart,
         targetDate: Store.addDays(today, Math.min(seg, span)),
         done: false

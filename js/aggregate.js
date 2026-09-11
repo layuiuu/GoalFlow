@@ -217,10 +217,7 @@
     var tasks = Store.tasksWhere(function (t) { return t.goalId === goal.id; });
     var prog = global.Rules.milestoneProgress(goal, tasks);
     var overdue = overdueTasks(goal.id);
-    var past = tasks.filter(function (t) { return t.status !== 'skipped'; });
-    var rate = past.length ? past.reduce(function (s, t) {
-      return s + (t.status === 'done' ? 1 : t.status === 'partial' ? 0.5 : 0);
-    }, 0) / past.length : 0;
+    var rate = prog.taskRate; // 统一口径：时长加权（与详情页一致）
     // 最近一次与该目标相关的复盘备注
     var note = '', noteDate = '';
     Store.getReviews().forEach(function (r) {

@@ -431,6 +431,16 @@ button { font-family: inherit; }
   background: linear-gradient(90deg, rgba(42, 106, 255, .05), transparent);
 }
 
+/* 指标 ⓘ 注解 */
+.info-i {
+  display: inline-block; margin-left: 3px;
+  font-size: 10px; font-weight: 400; font-style: normal;
+  color: var(--faint); cursor: pointer;
+  border: 1px solid var(--faint); border-radius: 50%;
+  width: 14px; height: 14px; line-height: 12px; text-align: center;
+  vertical-align: 2px;
+}
+
 /* ---------- AI 调整预览页 ---------- */
 .ap-footer {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 75;
