@@ -106,11 +106,8 @@
   function defaults() {
     return {
       dailyBudget: { weekday: 180, weekend: 300 },  // 全局每日可用总时长（分钟）
-      defaultPriority: 'mid',
-      planMode: 'per-goal',        // per-goal | global（global 为 v2 预留）
-      allowCrossGoal: true,        // 允许 AI 提出跨目标调整建议
-      autoRebalance: false,        // 生成计划时自动应用目标间协调（变更仍留痕可撤销）
-      todayView: 'smart',          // smart | byGoal | byTime
+      defaultPriority: 'mid',      // 新建目标/任务的默认优先级（不再暴露设置项）
+      todayView: 'smart',          // 今日页视图偏好（smart | byGoal | byTime，用户在今日页切换）
       goalLimit: 5,                // 活跃目标数软上限
       streakThreshold: 80,         // 当日完成率 ≥x% 记为达标天（连续达标判定）
       api: { base: 'https://api.deepseek.com', key: '', model: 'deepseek-chat', proxyPrefix: '' },

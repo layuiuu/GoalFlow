@@ -1563,51 +1563,23 @@
     var el = $('#settings-body');
     var mockOpts = [['auto', '自动（无 Key 时用 Mock）'], ['on', '始终 Mock 演示'], ['off', '关闭（始终真实 API）']]
       .map(function (m) { return '<option value="' + m[0] + '"' + (s.mock === m[0] ? ' selected' : '') + '>' + m[1] + '</option>'; }).join('');
-    var prioOpts = Store.PRIORITIES.map(function (p) {
-      return '<option value="' + p.id + '"' + (s.defaultPriority === p.id ? ' selected' : '') + '>默认优先级：' + p.name + '</option>';
-    }).join('');
-    var viewOpts = [['smart', '智能排序'], ['byGoal', '按目标分组'], ['byTime', '按时长']]
-      .map(function (v) { return '<option value="' + v[0] + '"' + (s.todayView === v[0] ? ' selected' : '') + '>今日页默认：' + v[1] + '</option>'; }).join('');
-    var modeOpts = [['per-goal', '分目标独立调整（推荐）'], ['global', '全局协调（高级 · 即将推出）']]
-      .map(function (m) { return '<option value="' + m[0] + '"' + (s.planMode === m[0] ? ' selected' : '') + '>' + m[1] + '</option>'; }).join('');
 
     el.innerHTML =
-      // 多目标管理
+      // 1. 多目标管理
       '<div class="card"><h3>🎯 多目标管理</h3>' +
       '<div class="form-2col">' +
       '<div class="form-item"><label>全局预算 · 工作日（分钟）</label><input type="number" data-setting="dailyBudget.weekday" value="' + s.dailyBudget.weekday + '" min="0" step="15"></div>' +
       '<div class="form-item"><label>全局预算 · 周末（分钟）</label><input type="number" data-setting="dailyBudget.weekend" value="' + s.dailyBudget.weekend + '" min="0" step="15"></div>' +
       '</div>' +
-      '<div class="form-2col">' +
-      '<div class="form-item"><label><select data-setting="defaultPriority" style="width:100%">' + prioOpts + '</select></label></div>' +
-      '<div class="form-item"><label><select data-setting="todayView" style="width:100%">' + viewOpts + '</select></label></div>' +
-      '</div>' +
       '<div class="form-item"><label>活跃目标数提醒阈值</label><input type="number" data-setting="goalLimit" value="' + s.goalLimit + '" min="1" max="10">' +
       '<p class="form-hint">活跃目标超过 ' + s.goalLimit + ' 个时，首页和目标页会提醒你注意负荷（仅提醒，不强制）</p></div>' +
       '</div>' +
 
-      // AI 设置
+      // 2. AI 调整（精简说明）
       '<div class="card"><h3>🤖 AI 调整</h3>' +
-      '<div class="form-item"><label>AI 调整模式</label><select data-setting="planMode" style="width:100%">' + modeOpts + '</select>' +
-      '<p class="form-hint">每个目标单独生成和调整任务，今日页自动汇总并检查总时长是否超预算</p></div>' +
-      '<div class="form-item check-row"><input type="checkbox" id="st-cross" data-setting="allowCrossGoal"' + (s.allowCrossGoal ? ' checked' : '') + '>' +
-      '<label for="st-cross" style="margin:0">允许 AI 提出跨目标建议（如负荷太高时延后低优先级目标）</label></div>' +
-      '<div class="form-item check-row"><input type="checkbox" id="st-auto" data-setting="autoRebalance"' + (s.autoRebalance ? ' checked' : '') + '>' +
-      '<label for="st-auto" style="margin:0">生成计划时自动应用目标间协调（变更仍留痕可撤销）</label></div>' +
-      '<p class="form-hint">🛡️ AI 只提建议：任何调整都先给你看预览，确认后才生效，也可以拒绝或撤销。🔒固定任务和已完成的任务 AI 不会碰</p></div>' +
+      '<p class="form-hint" style="margin:0">🛡️ AI 自动全局协调多目标，任何调整都先给你看预览，确认后才生效，也可以拒绝或撤销。🔒 固定任务和已完成的任务 AI 不会碰。</p></div>' +
 
-      // 数据（前置，便于发现）
-      '<div class="card"><h3>💾 数据（仅存本机）</h3>' +
-      '<div class="btn-row" style="margin-bottom:8px">' +
-      '<button class="btn ghost" data-action="export-data">导出备份</button>' +
-      '<button class="btn ghost" data-action="import-data">导入备份</button></div>' +
-      '<div class="btn-row">' +
-      (Store.getGoals().length ? '' : '<button class="btn ok" data-action="load-demo">载入演示数据</button>') +
-      (Store.hasDemoData() ? '<button class="btn ghost" data-action="clear-demo">清除演示数据</button>' : '') +
-      '<button class="btn danger" data-action="reset-all">清空全部数据</button></div>' +
-      '<p class="form-hint">建议定期「导出备份」保存 JSON 文件；清空浏览器站点数据会丢失所有记录，导入时自动校验备份格式</p></div>' +
-
-      // API
+      // 3. API 配置（高频调试区）
       '<div class="card"><h3>🔑 API 配置（OpenAI 兼容）</h3>' +
       '<div class="form-item"><label>演示模式</label><select data-setting="mock" style="width:100%">' + mockOpts + '</select></div>' +
       '<div class="form-item"><label>API 地址（Base URL）</label><input data-setting="api.base" value="' + esc(s.api.base) + '" placeholder="https://api.deepseek.com"></div>' +
@@ -1620,13 +1592,24 @@
       '<button class="btn ghost sm" data-action="test-api">测试连接</button>' +
       '<p class="form-hint">兼容 DeepSeek / 智谱 GLM / 通义 / Kimi 等 OpenAI 兼容接口</p></div>' +
 
-      // 用量
+      // 4. AI 用量（与 API 配套）
       '<div class="card"><h3>📈 AI 用量（本机累计）</h3>' +
       '<div class="sum-bar" style="padding:4px 0">' +
       '<div><b>' + usage.count + '</b><span>调用次数</span></div>' +
       '<div><b>' + usage.total.toLocaleString() + '</b><span>Tokens</span></div>' +
       '<div><b>¥' + usage.cost.toFixed(2) + '</b><span>估算成本</span></div></div>' +
-      '<button class="btn ghost sm" data-action="clear-usage">清零统计</button></div>';
+      '<button class="btn ghost sm" data-action="clear-usage">清零统计</button></div>' +
+
+      // 5. 数据（安全防护收尾）
+      '<div class="card"><h3>💾 数据（仅存本机）</h3>' +
+      '<div class="btn-row" style="margin-bottom:8px">' +
+      '<button class="btn ghost" data-action="export-data">导出备份</button>' +
+      '<button class="btn ghost" data-action="import-data">导入备份</button></div>' +
+      '<div class="btn-row">' +
+      (Store.getGoals().length ? '' : '<button class="btn ok" data-action="load-demo">载入演示数据</button>') +
+      (Store.hasDemoData() ? '<button class="btn ghost" data-action="clear-demo">清除演示数据</button>' : '') +
+      '<button class="btn danger" data-action="reset-all">清空全部数据</button></div>' +
+      '<p class="form-hint">建议定期「导出备份」保存 JSON 文件；清空浏览器站点数据会丢失所有记录，导入时自动校验备份格式</p></div>';
   }
 
   function saveSettingFromInput(input) {
