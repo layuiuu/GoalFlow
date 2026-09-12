@@ -134,11 +134,11 @@
     // 数据点
     for (var p = 0; p < n; p++) {
       ctx.beginPath();
-      ctx.arc(xAt(p), yAt(values[p]), 3, 0, Math.PI * 2);
+      ctx.arc(xAt(p), yAt(values[p]), 3.6, 0, Math.PI * 2);
       ctx.fillStyle = '#ffffff';
       ctx.fill();
       ctx.strokeStyle = color;
-      ctx.lineWidth = 1.8;
+      ctx.lineWidth = 2.2;
       ctx.stroke();
     }
 

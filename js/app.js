@@ -481,7 +481,7 @@
       if (eta && eta >= today) stageMeta += '<span>🏁 预计 ' + eta.slice(5) + ' 完成</span>';
     }
     return '<div class="card goal-card" data-action="open-detail" data-id="' + g.id + '">' +
-      '<div class="goal-ring" style="background:conic-gradient(' + ty.color + ' ' + pct + '%, #e9edf7 0)">' +
+      '<div class="goal-ring" style="background:conic-gradient(var(--brand-3) 0%, var(--brand) 45%, var(--brand-2) ' + pct + '%, #EDF1F7 ' + pct + '%)">' +
       '<i style="background:#fff;width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center">' + pct + '%</i></div>' +
       '<div class="goal-main">' +
       '<p class="goal-title">' + (g.isCore ? '★ ' : '') + esc(g.title) + '</p>' +
@@ -1457,7 +1457,7 @@
           '<span class="val">—</span></div>';
       }
       return '<div class="bar-row" style="margin-bottom:7px"><span style="min-width:48px;color:' + e.color + '">' + e.name + '</span>' +
-        '<div class="bar"><i style="width:' + e.rate + '%;background:' + e.color + '"></i></div>' +
+        '<div class="bar"><i style="width:' + e.rate + '%;background:linear-gradient(90deg, ' + e.color + 'B3, ' + e.color + ')"></i></div>' +
         '<span class="val">' + e.rate + '%</span></div>';
     }).join('') +
       '<p class="form-hint">' + energyHint + '</p>' +
@@ -1474,7 +1474,7 @@
         '<div class="info">' +
         '<div class="name"><span class="dot" style="background:' + ty.color + '"></span>' + (g.isCore ? '★ ' : '') + esc(g.title) + '</div>' +
         '<div class="bar-row" style="margin-bottom:3px"><span style="min-width:52px;color:var(--muted)">时间进度</span>' +
-        '<div class="bar"><i style="width:' + s.timePct + '%;background:#c7d0e0"></i></div>' +
+        '<div class="bar"><i style="width:' + s.timePct + '%;background:linear-gradient(90deg, #D5DCE6, #C2CBD9)"></i></div>' +
         '<span class="val">' + s.timePct + '%</span></div>' +
         '<div class="bar-row"><span style="min-width:52px;color:var(--muted)">任务完成率</span>' +
         '<div class="bar"><i style="width:' + ratePct + '%;background:' + ty.color + '"></i></div>' +
@@ -1511,7 +1511,7 @@
     Chart.drawLineChart($('#chart-daily'), {
       labels: daily.map(function (d) { return d.label; }),
       values: daily.map(function (d) { return d.rate; }),
-      color: '#4f6ef7', unit: '%', emptyText: '暂无打卡数据',
+      color: '#5BC0BE', unit: '%', emptyText: '暂无打卡数据',
       tipFn: function (i) {
         var d = daily[i];
         return d.label + ' · 完成 ' + d.done + '/' + d.total + ' 个任务 · 已排 ' + d.plannedMin + ' 分钟（' + d.rate + '%）';
@@ -1525,7 +1525,7 @@
     Chart.drawLineChart($('#chart-weekly'), {
       labels: weekly.map(function (d) { return d.label; }),
       values: weekly.map(function (d) { return d.rate; }),
-      color: '#10b981', unit: '%', emptyText: '暂无打卡数据'
+      color: '#3FA8A5', unit: '%', emptyText: '暂无打卡数据'
     });
     Chart.bindTooltip($('#chart-weekly'));
   }

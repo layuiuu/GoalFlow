@@ -4,37 +4,39 @@
  * ========================================================== */
 
 :root {
-  --bg: #f4f6fb;
-  --bg-grad: linear-gradient(180deg, #F0F7FF 0%, #FFFFFF 100%);
+  --bg: #F5F7FA;
   --card: #ffffff;
-  --text: #1f2937;
-  --muted: #6b7280;
-  --faint: #9ca3af;
-  --line: #e7eaf3;
-  --brand: #2A6AFF;
-  --brand-2: #3B82F6;
-  --brand-weak: #E8F0FF;
+  --text: #1F2937;
+  --muted: #6B7280;
+  --faint: #9CA3AF;
+  --line: #ECF0F5;
+  --brand: #5BC0BE;
+  --brand-2: #3FA8A5;
+  --brand-3: #7DD3D0;
+  --brand-weak: #E6F7F7;
   --ok: #22c55e;
   --warn: #f59e0b;
   --danger: #ff4d4f;
-  --shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
-  --radius: 12px;
+  --shadow: 0 4px 16px rgba(0, 0, 0, 0.04);
+  --shadow-float: 0 8px 24px rgba(0, 0, 0, 0.08);
+  --radius: 18px;
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body { margin: 0; padding: 0; }
 body {
-  background: var(--bg-grad);
-  background-attachment: fixed;
+  background: var(--bg);
   color: var(--text);
   font: 15px/1.55 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-variant-numeric: tabular-nums;
 }
 button { font-family: inherit; }
 
 /* ---------- 页面骨架 ---------- */
 #app { max-width: 560px; margin: 0 auto; }
-.page { display: none; padding: 14px 14px 96px; }
+.page { display: none; padding: 14px 14px 150px; }
 .page.active { display: block; }
+#page-today { padding-bottom: 240px; } /* 为悬浮统计条 + 胶囊导航留空间 */
 
 .page-head {
   display: flex; align-items: flex-start; justify-content: space-between;
@@ -48,35 +50,44 @@ button { font-family: inherit; }
 .brand-head { display: block; position: relative; padding-right: 0; }
 .brand-row { display: flex; align-items: center; gap: 9px; }
 .brand-logo {
-  width: 20px; height: 20px; border-radius: 50%;
-  border: 3px solid var(--brand);
-  background: var(--brand-weak);
-  position: relative; flex-shrink: 0;
+  width: 22px; height: 22px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
 }
-.brand-logo::after {
-  content: ''; position: absolute; inset: 0; margin: auto;
-  width: 5px; height: 5px; border-radius: 50%; background: #ffffff;
-}
-.brand-name { font-size: 17px; font-weight: 700; color: #1F2937; letter-spacing: .5px; }
+.brand-logo svg { width: 22px; height: 22px; display: block; }
+.brand-name { font-size: 17px; font-weight: 700; color: #1F2937; letter-spacing: .4px; }
 .brand-sub { margin: 6px 0 0; font-size: 12px; color: #6B7280; }
 .brand-head .head-action { position: absolute; right: 0; top: 2px; }
 
-/* ---------- 底部导航 ---------- */
+/* ---------- 底部悬浮胶囊导航 ---------- */
 .tabbar {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 70;
-  display: flex; justify-content: space-around;
-  max-width: 560px; margin: 0 auto;
-  background: rgba(255, 255, 255, .96);
-  border-top: 1px solid var(--line);
-  padding: 6px 0 calc(6px + env(safe-area-inset-bottom));
+  position: fixed; left: 16px; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom));
+  z-index: 70;
+  max-width: 528px; margin: 0 auto; height: 64px;
+  display: flex; align-items: center; justify-content: space-around;
+  background: rgba(255, 255, 255, 0.9);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  border: 0;
+  border-radius: 999px;
+  box-shadow: var(--shadow-float);
+  padding: 0 6px;
 }
 .tabbar button {
-  flex: 1; border: 0; background: none; cursor: pointer;
-  display: flex; flex-direction: column; align-items: center; gap: 1px;
-  color: var(--faint); font-size: 11px; padding: 4px 0;
+  flex: 0 1 auto; border: 0; background: none; cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  color: var(--faint); font-size: 10.5px; padding: 7px 16px;
+  border-radius: 999px;
+  transition: background .18s ease, color .18s ease;
 }
-.tabbar button .ic { font-size: 19px; line-height: 1.2; }
-.tabbar button.active { color: var(--brand); font-weight: 600; }
+.tabbar .nav-ic { width: 22px; height: 22px; display: block; }
+.tabbar .nav-ic .solid { opacity: 0; transition: opacity .15s ease; }
+.tabbar button.active {
+  color: var(--brand);
+  font-weight: 600;
+  background: rgba(91, 192, 190, 0.12);
+}
+.tabbar button.active .nav-ic .solid { opacity: 1; }
+.tabbar button:active { transform: scale(.96); }
 
 /* ---------- 通用组件 ---------- */
 .card {
@@ -93,9 +104,9 @@ button { font-family: inherit; }
   transition: transform .12s ease, opacity .12s ease, filter .12s ease;
 }
 .btn.primary {
-  background: linear-gradient(135deg, #2A6AFF 0%, #3B82F6 100%);
+  background: linear-gradient(135deg, var(--brand-3) 0%, var(--brand) 55%, var(--brand-2) 100%);
   color: #fff;
-  box-shadow: 0 2px 8px rgba(42, 106, 255, .25);
+  box-shadow: 0 2px 10px rgba(91, 192, 190, .3);
 }
 .btn.ok { background: #e7f8ee; color: #15803d; }
 .btn.danger { background: #fdeaea; color: var(--danger); }
@@ -115,7 +126,7 @@ button { font-family: inherit; }
 
 .chip {
   display: inline-flex; align-items: center; gap: 4px;
-  border: 1px solid var(--line); background: #fff; color: var(--muted);
+  border: 1px solid #EDF1F6; background: #FBFCFE; color: var(--muted);
   border-radius: 999px; padding: 4px 11px; font-size: 12px; cursor: pointer;
 }
 .chip.active { background: var(--brand-weak); border-color: var(--brand); color: var(--brand); font-weight: 600; }
@@ -130,7 +141,7 @@ button { font-family: inherit; }
 
 .tag {
   display: inline-block; padding: 1.5px 8px; border-radius: 6px;
-  font-size: 11px; background: #f1f4fb; color: var(--muted); white-space: nowrap;
+  font-size: 11px; background: #F4F6FA; color: var(--muted); white-space: nowrap;
 }
 
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: 1px; }
@@ -156,7 +167,7 @@ button { font-family: inherit; }
   background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow);
   padding: 11px 13px;
 }
-.task-card.done-state { opacity: .72; }
+.task-card.done-state { opacity: .6; }
 .task-top { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); margin-bottom: 5px; flex-wrap: wrap; }
 .task-top .goal-name { color: var(--text); font-weight: 600; }
 .task-title { font-size: 15px; font-weight: 600; margin: 0 0 3px; }
@@ -179,12 +190,23 @@ button { font-family: inherit; }
 
 /* ---------- 汇总条 / 统计 ---------- */
 .sum-bar { display: flex; text-align: center; padding: 11px 4px; }
+/* 今日页统计栏：悬浮在导航胶囊上方的胶囊卡 */
+#today-body > .card.sum-bar {
+  position: fixed; left: 16px; right: 16px;
+  bottom: calc(16px + env(safe-area-inset-bottom) + 76px);
+  max-width: 528px; margin: 0 auto; z-index: 66;
+  border-radius: 999px; padding: 9px 6px;
+  box-shadow: var(--shadow-float);
+  background: rgba(255, 255, 255, .95);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
 .sum-bar > div { flex: 1; }
 .sum-bar b { display: block; font-size: 16.5px; }
 .sum-bar span { font-size: 11px; color: var(--muted); }
 
 .stat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; }
-.stat-grid .cell { background: var(--card); border-radius: 12px; box-shadow: var(--shadow); padding: 10px 6px; text-align: center; }
+.stat-grid .cell { background: linear-gradient(165deg, #FFFFFF 0%, #F2F8F9 100%); border-radius: 16px; box-shadow: var(--shadow); padding: 11px 6px; text-align: center; }
 .stat-grid .cell b { display: block; font-size: 17px; }
 .stat-grid .cell span { font-size: 11px; color: var(--muted); }
 
@@ -261,8 +283,7 @@ button { font-family: inherit; }
 /* ---------- 目标详情覆盖层 ---------- */
 .overlay {
   position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 60;
-  background: var(--bg-grad);
-  background-attachment: fixed;
+  background: var(--bg);
   max-width: 560px; margin: 0 auto; overflow-y: auto; display: none;
 }
 .overlay.show { display: block; animation: fadein .18s ease; }
@@ -321,9 +342,10 @@ button { font-family: inherit; }
 .form-item { margin-bottom: 11px; }
 .form-item > label { display: block; font-size: 12.5px; color: var(--muted); margin-bottom: 4px; font-weight: 600; }
 .form-item input, .form-item select, .form-item textarea {
-  width: 100%; border: 1.5px solid var(--line); border-radius: 10px;
+  width: 100%; border: 1.5px solid var(--line); border-radius: 12px;
   padding: 9px 11px; font-size: 14px; font-family: inherit; background: #fff; color: var(--text);
 }
+.form-item input, .form-item select { min-height: 42px; }
 .form-item textarea { resize: vertical; min-height: 60px; }
 .form-item input:focus, .form-item select:focus, .form-item textarea:focus {
   outline: none; border-color: var(--brand);
@@ -364,7 +386,7 @@ button { font-family: inherit; }
 .review-sum b { color: var(--text); }
 
 /* 复盘卡（今日页末尾）与任务卡形成视觉区分 */
-#today-body > .card:last-child { background: #F8FAFC; border: 1px solid #EDF2F7; }
+#today-body > .card:last-child { background: #F8FAFC; }
 
 /* ---------- v1.1 交互补充 ---------- */
 .task-card { cursor: pointer; position: relative; }
@@ -372,6 +394,7 @@ button { font-family: inherit; }
 .st-btn.done-main { border-color: var(--line); color: var(--muted); font-weight: 600; background: #fff; }
 .st-btn.done-main.on-done { border-color: var(--ok); background: #d9f5e4; color: #15803d; }
 .st-btn.more-btn { color: var(--muted); }
+.st-btn:active { transform: scale(.97); }
 
 /* 打卡状态与卡片外观联动：角标 + 左侧色条 */
 .task-badge {
@@ -431,7 +454,7 @@ button { font-family: inherit; }
   border-left: 3px solid var(--brand);
   padding-left: 10px;
   border-radius: 4px;
-  background: linear-gradient(90deg, rgba(42, 106, 255, .05), transparent);
+  background: linear-gradient(90deg, rgba(91, 192, 190, .07), transparent);
 }
 
 /* 指标 ⓘ 注解 */
