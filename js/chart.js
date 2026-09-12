@@ -6,7 +6,7 @@
 (function (global) {
   'use strict';
 
-  var state = null; // 当前 canvas 的绘制参数，供交互重绘
+  // 绘制参数挂在各 canvas 元素上（canvas.__chartState），多图表互不干扰
 
   function niceMax(v) {
     if (v <= 0) return 100;
@@ -88,7 +88,7 @@
       ctx.textBaseline = 'middle';
       ctx.font = '12px -apple-system, "PingFang SC", sans-serif';
       ctx.fillText(opts.emptyText || '暂无数据', W / 2, H / 2);
-      state = null;
+      canvas.__chartState = null;
       return;
     }
 
@@ -156,40 +156,62 @@
     ctx.textBaseline = 'top';
     idxs.forEach(function (t) { ctx.fillText(labels[t], xAt(t), pad.top + ih + 8); });
 
-    state = { canvas: canvas, opts: opts, pad: pad, n: n, stepX: stepX, maxV: maxV, iw: iw, ih: ih };
+    canvas.__chartState = { canvas: canvas, opts: opts, pad: pad, n: n, stepX: stepX, maxV: maxV, iw: iw, ih: ih };
   }
 
-  /** 交互提示：pointermove / touch 时高亮最近点 */
+  /** 交互提示：pointermove / touch 时高亮最近点；轻点（位移<8px）触发 opts.onPointClick(i) */
   function bindTooltip(canvas) {
     var box = canvas.parentElement;
     var tip = document.createElement('div');
     tip.className = 'chart-tip';
     box.appendChild(tip);
+    var downPos = null;
 
-    function onMove(ev) {
-      if (!state || state.canvas !== canvas) return;
+    function idxAt(ev, st) {
       var rect = canvas.getBoundingClientRect();
       var cx = (ev.clientX - rect.left);
-      var i = state.n > 1
-        ? Math.round((cx - state.pad.left) / state.stepX)
+      var i = st.n > 1
+        ? Math.round((cx - st.pad.left) / st.stepX)
         : 0;
-      i = Math.max(0, Math.min(state.n - 1, i));
-      var v = state.opts.values[i];
-      var x = state.pad.left + (state.n > 1 ? i * state.stepX : state.iw / 2);
-      var y = state.pad.top + state.ih - (v / state.maxV) * state.ih;
+      return Math.max(0, Math.min(st.n - 1, i));
+    }
+
+    function onMove(ev) {
+      var st = canvas.__chartState;
+      if (!st) return;
+      var i = idxAt(ev, st);
+      var v = st.opts.values[i];
+      var x = st.pad.left + (st.n > 1 ? i * st.stepX : st.iw / 2);
+      var y = st.pad.top + st.ih - (v / st.maxV) * st.ih;
       tip.style.display = 'block';
       tip.style.left = x + 'px';
       tip.style.top = y + 'px';
-      tip.textContent = state.opts.tipFn
-        ? state.opts.tipFn(i)
-        : (state.opts.labels[i] + ' · ' + v + (state.opts.unit || ''));
+      tip.textContent = st.opts.tipFn
+        ? st.opts.tipFn(i)
+        : (st.opts.labels[i] + ' · ' + v + (st.opts.unit || ''));
+    }
+    function onDown(ev) {
+      downPos = { x: ev.clientX, y: ev.clientY };
+      onMove(ev);
+    }
+    function onUp(ev) {
+      tip.style.display = 'none';
+      var st = canvas.__chartState;
+      if (downPos && st) {
+        var dx = Math.abs(ev.clientX - downPos.x);
+        var dy = Math.abs(ev.clientY - downPos.y);
+        if (dx < 8 && dy < 8 && typeof st.opts.onPointClick === 'function') {
+          st.opts.onPointClick(idxAt(ev, st));
+        }
+      }
+      downPos = null;
     }
     function onLeave() { tip.style.display = 'none'; }
 
     canvas.addEventListener('pointermove', onMove);
-    canvas.addEventListener('pointerdown', onMove);
+    canvas.addEventListener('pointerdown', onDown);
     canvas.addEventListener('pointerleave', onLeave);
-    canvas.addEventListener('pointerup', onLeave);
+    canvas.addEventListener('pointerup', onUp);
   }
 
   function hexA(hex, a) {

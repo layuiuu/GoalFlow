@@ -112,7 +112,7 @@
       autoRebalance: false,        // 生成计划时自动应用目标间协调（变更仍留痕可撤销）
       todayView: 'smart',          // smart | byGoal | byTime
       goalLimit: 5,                // 活跃目标数软上限
-      streakThreshold: 60,         // 当日完成率 ≥x% 记为达标天
+      streakThreshold: 80,         // 当日完成率 ≥x% 记为达标天（连续达标判定）
       api: { base: 'https://api.deepseek.com', key: '', model: 'deepseek-chat', proxyPrefix: '' },
       mock: 'auto',                // auto=无 Key 时用 Mock | on=始终 Mock | off=始终真实
       priceTable: defaultPriceTable()

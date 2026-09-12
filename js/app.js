@@ -1420,8 +1420,8 @@
 
     html += '<div class="stat-grid">' +
       '<div class="cell"><b>' + sum.activeCount + '</b><span>活跃目标</span></div>' +
-      '<div class="cell"><b>' + sum.allRate + '%</b><span>累计完成率</span></div>' +
-      '<div class="cell"><b>' + sum.streak + '</b><span>连续达标(天)</span></div></div>';
+      '<div class="cell"><b>' + sum.allRate + '%<span class="info-i" data-action="info-cumrate">ⓘ</span></b><span>累计完成率</span></div>' +
+      '<div class="cell"><b>' + sum.streak + '<span class="info-i" data-action="info-streak">ⓘ</span></b><span>连续达标(天)</span></div></div>';
 
     // 每日完成率曲线
     html += '<div class="card"><h3>每日完成率</h3>' +
@@ -1434,31 +1434,56 @@
     html += '<div class="card"><h3>每周完成率（近 8 周）</h3>' +
       '<div class="chart-box"><canvas id="chart-weekly" style="width:100%;height:100%"></canvas></div></div>';
 
-    // 精力维度
+    // 精力维度：行渲染（无数据行显示 —）+ 依据数据分布生成描述文案
     var es = Agg.energyStats(30);
-    var weakEnergy = es.filter(function (e) { return e.total >= 3; }).sort(function (a, b) { return a.rate - b.rate; })[0];
+    var withData = es.filter(function (e) { return e.total > 0; });
+    var energyHint;
+    if (!withData.length) {
+      energyHint = '近 30 天还没有任务记录';
+    } else if (withData.length === 1) {
+      energyHint = '当前仅包含' + withData[0].name + '任务，完成率 ' + withData[0].rate + '%';
+    } else {
+      var rates = withData.map(function (e) { return e.rate; });
+      var spread = Math.max.apply(null, rates) - Math.min.apply(null, rates);
+      var weakest = withData.slice().sort(function (a, b) { return a.rate - b.rate; })[0];
+      energyHint = spread <= 15
+        ? '各精力段完成情况均衡，继续保持'
+        : '💡 ' + weakest.name + '任务完成率仅 ' + weakest.rate + '%（' + weakest.total + ' 个），可让 AI 调整安排';
+    }
     html += '<div class="card"><h3>精力维度 · 近 30 天完成率</h3>' + es.map(function (e) {
+      if (!e.total) {
+        return '<div class="bar-row dim" style="margin-bottom:7px"><span style="min-width:48px;color:var(--faint)">' + e.name + '</span>' +
+          '<div class="bar empty"><i style="width:0"></i></div>' +
+          '<span class="val">—</span></div>';
+      }
       return '<div class="bar-row" style="margin-bottom:7px"><span style="min-width:48px;color:' + e.color + '">' + e.name + '</span>' +
         '<div class="bar"><i style="width:' + e.rate + '%;background:' + e.color + '"></i></div>' +
         '<span class="val">' + e.rate + '%</span></div>';
     }).join('') +
-      '<p class="form-hint">' + (weakEnergy && weakEnergy.rate < 70
-        ? '💡 ' + weakEnergy.name + '任务完成率只有 ' + weakEnergy.rate + '%，可能偏难或时段不对'
-        : '各精力段完成情况均衡，继续保持') + '</p>' +
+      '<p class="form-hint">' + energyHint + '</p>' +
       '<button class="btn ghost sm" data-action="ai-rebalance" data-scope="global" data-trigger="manual" style="margin-top:4px">✨ 让 AI 优化任务安排</button></div>';
 
-    // 分目标卡
+    // 分目标进度：时间进度（灰条）+ 任务完成率（类型色条）+ 延期情况
     html += '<div class="card"><h3>分目标进度</h3>';
     var stats = Store.activeGoals().map(Agg.goalStats);
     if (!stats.length) html += '<p class="card-sub">暂无活跃目标</p>';
     stats.forEach(function (s) {
       var g = s.goal, ty = Store.typeOf(g.type);
+      var ratePct = Math.round(s.rate * 100);
       html += '<div class="goal-mini">' +
-        '<div class="info"><div class="name"><span class="dot" style="background:' + ty.color + '"></span>' + (g.isCore ? '★ ' : '') + esc(g.title) + '</div>' +
-        '<div class="bar-row"><div class="bar"><i style="width:' + Math.round(s.rate * 100) + '%;background:' + ty.color + '"></i></div>' +
-        '<span class="val">' + Math.round(s.rate * 100) + '%</span></div></div>' +
-        '<div style="text-align:right;font-size:11px;color:var(--muted)">进度 ' + Math.round(s.progress.overall * 100) + '%<br>' +
-        (s.overdue ? '<span style="color:var(--danger)">逾期 ' + s.overdue + '</span>' : '无逾期') + '</div></div>';
+        '<div class="info">' +
+        '<div class="name"><span class="dot" style="background:' + ty.color + '"></span>' + (g.isCore ? '★ ' : '') + esc(g.title) + '</div>' +
+        '<div class="bar-row" style="margin-bottom:3px"><span style="min-width:52px;color:var(--muted)">时间进度</span>' +
+        '<div class="bar"><i style="width:' + s.timePct + '%;background:#c7d0e0"></i></div>' +
+        '<span class="val">' + s.timePct + '%</span></div>' +
+        '<div class="bar-row"><span style="min-width:52px;color:var(--muted)">任务完成率</span>' +
+        '<div class="bar"><i style="width:' + ratePct + '%;background:' + ty.color + '"></i></div>' +
+        '<span class="val">' + ratePct + '%</span></div>' +
+        '</div>' +
+        '<div style="text-align:right;font-size:11px;color:var(--muted);min-width:76px">' +
+        (s.overdue ? '<span style="color:var(--danger)">' + s.overdue + ' 个任务已延期</span>' : '<span>无延期</span>') +
+        (s.eta ? '<br>' + s.eta.slice(5) + ' 预计完成' : '') +
+        '</div></div>';
       if (s.lastNote) html += '<p class="form-hint" style="margin:-2px 0 6px 14px">📝 ' + esc(s.lastNote) + '</p>';
     });
     html += '</div>';
@@ -1473,13 +1498,15 @@
           '<div class="bar"><i style="width:' + Math.round(c.rate * 100) + '%;background:' + ty.color + '"></i></div>' +
           '<span class="val">' + Math.round(c.rate * 100) + '%</span></div>';
       }).join('') +
-        '<p class="form-hint">最常拖延：<b style="color:var(--danger)">' + esc(mostDelay.goal.title) + '</b>（过期未完成占比 ' + Math.round(mostDelay.overdueIdx * 100) + '%）' +
-        (mostDelay.overdueIdx > 0.3 ? '，建议让 AI 延后或拆分它的任务' : '') + '</p></div>';
+        '<p class="form-hint">' + (mostDelay.overdueIdx > 0
+          ? '最常拖延：<b style="color:var(--danger)">' + esc(mostDelay.goal.title) + '</b>（过期未完成占比 ' + Math.round(mostDelay.overdueIdx * 100) + '%）' +
+            (mostDelay.overdueIdx > 0.3 ? '，建议让 AI 延后或拆分它的任务' : '')
+          : '各目标均无延期，节奏保持得不错 🎉') + '</p></div>';
     }
 
     el.innerHTML = html;
 
-    // 画图
+    // 画图（点击数据点 → 当日详情卡片）
     var daily = Agg.dailyRates(state.statsRange);
     Chart.drawLineChart($('#chart-daily'), {
       labels: daily.map(function (d) { return d.label; }),
@@ -1488,6 +1515,9 @@
       tipFn: function (i) {
         var d = daily[i];
         return d.label + ' · 完成 ' + d.done + '/' + d.total + ' 个任务 · 已排 ' + d.plannedMin + ' 分钟（' + d.rate + '%）';
+      },
+      onPointClick: function (i) {
+        if (daily[i]) openDayDetail(daily[i].date);
       }
     });
     Chart.bindTooltip($('#chart-daily'));
@@ -1498,6 +1528,29 @@
       color: '#10b981', unit: '%', emptyText: '暂无打卡数据'
     });
     Chart.bindTooltip($('#chart-weekly'));
+  }
+
+  /** 图表数据点点击：某日任务详情卡片 */
+  function openDayDetail(date) {
+    var st = Agg.dayStats(date);
+    if (!st.count) { toast('这一天没有任务记录'); return; }
+    var rows = [
+      ['✅ 已完成', st.done, st.doneMin],
+      ['⚠️ 部分完成', st.partial, st.partialMin],
+      ['❌ 未完成', st.missed, st.missedMin],
+      ['⬜ 待完成', st.todo, st.todoMin]
+    ].filter(function (r) { return r[1] > 0; }).map(function (r) {
+      return '<div class="log-item"><div class="log-head"><span>' + r[0] + '</span>' +
+        '<span class="scope">' + r[1] + ' 个 · ' + r[2] + ' 分钟</span></div></div>';
+    }).join('');
+    openModal('<h2>📅 ' + date + ' 周' + Store.weekdayCN(date) + '</h2>' +
+      '<div class="sum-bar" style="padding:4px 0">' +
+      '<div><b>' + Math.round(st.rate * 100) + '%</b><span>完成率</span></div>' +
+      '<div><b>' + (st.count - st.skipped) + '</b><span>任务数</span></div>' +
+      '<div><b>' + st.plannedMin + '</b><span>预计分钟</span></div></div>' +
+      rows +
+      '<button class="btn ghost block" data-action="goto-plan-day" data-date="' + date + '" style="margin-top:10px">去计划页查看这一天 →</button>' +
+      '<button class="btn primary block" data-action="close-modal" style="margin-top:8px">关闭</button>');
   }
 
   /* ==========================================================
@@ -1843,6 +1896,18 @@
     },
     'info-overall': function () {
       toast('整体进度 = 已完成任务时长 ÷ 目标已生成任务总时长；无任务时按已完成阶段数 ÷ 总阶段数');
+    },
+    'info-cumrate': function () {
+      toast('累计完成率 = 已完成任务预估时长 ÷ 所有任务总预估时长（部分完成按一半计，已跳过不计）');
+    },
+    'info-streak': function () {
+      toast('当日任务完成率 ≥' + (Store.loadSettings().streakThreshold || 80) + '% 即视为达标并累加连续天数；没有任务的日期会中断连续记录');
+    },
+    'goto-plan-day': function (el) {
+      closeModal();
+      state.planDate = el.dataset.date;
+      state.planView = 'day';
+      switchPage('plan');
     },
     'toggle-milestone': function (el) {
       var g = Store.goalById(state.detailId);

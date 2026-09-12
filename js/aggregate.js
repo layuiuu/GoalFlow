@@ -30,17 +30,19 @@
       budget: budgetFor(date),
       plannedMin: 0, count: tasks.length,
       done: 0, partial: 0, missed: 0, skipped: 0, todo: 0,
+      doneMin: 0, partialMin: 0, missedMin: 0, todoMin: 0, skippedMin: 0,
       score: 0, rate: 0, remaining: 0, over: 0
     };
     var denominator = 0;
     for (var i = 0; i < tasks.length; i++) {
       var t = tasks[i];
-      if (t.status !== 'skipped') st.plannedMin += (+t.estimateMin || 0);
-      if (t.status === 'done') { st.done++; st.score += 1; }
-      else if (t.status === 'partial') { st.partial++; st.score += 0.5; }
-      else if (t.status === 'missed') st.missed++;
-      else if (t.status === 'skipped') st.skipped++;
-      else st.todo++;
+      var min = +t.estimateMin || 0;
+      if (t.status !== 'skipped') st.plannedMin += min;
+      if (t.status === 'done') { st.done++; st.doneMin += min; st.score += 1; }
+      else if (t.status === 'partial') { st.partial++; st.partialMin += min; st.score += 0.5; }
+      else if (t.status === 'missed') { st.missed++; st.missedMin += min; }
+      else if (t.status === 'skipped') { st.skipped++; st.skippedMin += min; }
+      else { st.todo++; st.todoMin += min; }
       if (t.status !== 'skipped') denominator++;
     }
     st.rate = denominator ? st.score / denominator : 0;
@@ -218,6 +220,11 @@
     var prog = global.Rules.milestoneProgress(goal, tasks);
     var overdue = overdueTasks(goal.id);
     var rate = prog.taskRate; // 统一口径：时长加权（与详情页一致）
+    // 时间进度：已过天数 ÷ 目标总天数（从创建日到截止日）
+    var startDate = Store.fmtDate(new Date(goal.createdAt || Date.now()));
+    var totalDays = Math.max(1, Store.daysBetween(startDate, goal.deadline));
+    var passedDays = Store.clamp(Store.daysBetween(startDate, Store.todayStr()), 0, totalDays);
+    var timePct = Math.round(passedDays / totalDays * 100);
     // 最近一次与该目标相关的复盘备注
     var note = '', noteDate = '';
     Store.getReviews().forEach(function (r) {
@@ -244,6 +251,7 @@
       goal: goal,
       progress: prog,
       rate: rate,
+      timePct: timePct,
       overdue: overdue.length,
       future: tasks.filter(function (t) { return t.date >= Store.todayStr() && t.status === 'todo'; }).length,
       eta: eta,
@@ -274,16 +282,25 @@
     }).sort(function (a, b) { return b.rate - a.rate; });
   }
 
-  /** 全局汇总（看板首屏） */
+  /**
+   * 全局汇总（看板首屏）
+   * 累计完成率 = 已完成任务预估总时长 ÷ 所有任务总预估时长（部分完成按一半计，跳过不计）
+   */
   function globalSummary() {
-    var all = Store.getTasks().filter(function (t) { return t.status !== 'skipped'; });
-    var score = all.reduce(function (s, t) {
-      return s + (t.status === 'done' ? 1 : t.status === 'partial' ? 0.5 : 0);
-    }, 0);
+    var doneMin = 0, allMin = 0;
+    Store.getTasks().forEach(function (t) {
+      if (t.status === 'skipped') return;
+      var min = +t.estimateMin || 0;
+      allMin += min;
+      if (t.status === 'done') doneMin += min;
+      else if (t.status === 'partial') doneMin += min * 0.5;
+    });
     return {
       activeCount: Store.activeGoals().length,
       today: dayStats(Store.todayStr()),
-      allRate: all.length ? Math.round(score / all.length * 100) : 0,
+      allRate: allMin ? Math.round(doneMin / allMin * 100) : 0,
+      doneMin: doneMin,
+      allMin: allMin,
       streak: streak()
     };
   }

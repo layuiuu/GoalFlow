@@ -441,6 +441,11 @@ button { font-family: inherit; }
   vertical-align: 2px;
 }
 
+/* 精力维度：无数据行（浅灰占位） */
+.bar-row.dim .bar { background: #f3f5f9; }
+.bar-row.dim .val { color: var(--faint); }
+.bar-row.dim .bar > i { display: none; }
+
 /* ---------- AI 调整预览页 ---------- */
 .ap-footer {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 75;
