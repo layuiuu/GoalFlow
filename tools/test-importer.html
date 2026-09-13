@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>importer.js 测试</title>
+<style>
+  body { font: 14px/1.6 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; margin: 0; padding: 18px 16px 60px; background: #F5F7FA; color: #1F2937; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .sub { color: #6B7280; font-size: 12.5px; margin: 0 0 14px; }
+  .sum { font-size: 14px; font-weight: 700; padding: 10px 13px; border-radius: 12px; margin-bottom: 14px; }
+  .sum.ok { background: #e7f8ee; color: #15803d; }
+  .sum.bad { background: #fdeaea; color: #b91c1c; }
+  .case { background: #fff; border-radius: 12px; padding: 10px 13px; margin-bottom: 8px; box-shadow: 0 2px 8px rgba(0,0,0,.04); }
+  .case .head { display: flex; gap: 8px; align-items: baseline; }
+  .badge { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 99px; flex-shrink: 0; }
+  .badge.pass { background: #e7f8ee; color: #15803d; }
+  .badge.fail { background: #fdeaea; color: #b91c1c; }
+  .badge.skip { background: #f1f4fb; color: #6B7280; }
+  .name { font-weight: 600; font-size: 13.5px; }
+  .detail { margin: 5px 0 0; font-size: 12px; color: #6B7280; white-space: pre-wrap; word-break: break-all; }
+  .fail .detail { color: #b91c1c; }
+  code { background: #f4f6fa; padding: 1px 5px; border-radius: 5px; font-size: 12px; }
+  button { border: 0; border-radius: 10px; padding: 8px 14px; font-size: 13px; font-weight: 600; background: #E6F7F7; color: #3FA8A5; cursor: pointer; margin-bottom: 14px; }
+</style>
+</head>
+<body>
+<h1>importer.js 解析器测试</h1>
+<p class="sub">直接双击本文件用浏览器打开即可（无需服务器）。用例来自真实导入计划与历史回归缺陷。</p>
+<button id="run">重新运行</button>
+<div id="sum" class="sum"></div>
+<div id="list"></div>
+
+<script src="../js/store.js"></script>
+<script src="../js/importer.js"></script>
+<script>
+(function () {
+  'use strict';
+  var Store = window.Store, Importer = window.Importer;
+  var Y = Store.todayStr().slice(0, 4);          // 当前年份，用于把 9月14日 这类写成断言
+  var TODAY = Store.todayStr();
+  // 夹具是"9.14 开始"的真实计划：只在今天不晚于 9.14 时做全量断言，否则跳过（避免日期过期导致误报）
+  var FIXTURE_OK = TODAY <= Y + '-09-14';
+
+  // ===== 测试夹具：真实 14 周计划（保留全部周标题与关键写法，含易错项） =====
+  var PLAN = [
+    '第1周·启动与校准（9.14–9.20）',
+    '本周目标：确认报名、备齐材料、跑通每日单词+精听节奏并记录真实耗时',
+    '9月14日（周一）确认六级报名：查教务系统/班级群并设日历提醒（15分钟·低精力）',
+    '9月14日（周一）买近5年真题1套+安装背单词App与每日英语听力（30分钟·低精力）',
+    '9月14日（周一）单词：开通考频词库，过新词40个（45分钟·中精力）',
+    '9月14日（周一）精听第1篇：长对话，三遍法（90分钟·中精力）',
+    '9月15日（周二）精听第2篇：长对话（90分钟·中精力）',
+    '9月17日（周四）单词40个+泛听磨耳朵15min（90分钟·中精力）',
+    '9月18日（周五）仔细阅读精做第1篇+单词复习（120分钟·高精力）',
+    '9月19日（周六）仔细阅读精做第2–3篇（120分钟·高精力）',
+    '9月20日（周日）词汇复盘+精听补1篇（120分钟·中精力）',
+    '9月20日（周日）诊断周复盘：记录单词/精听实际耗时，校准下周任务量（30分钟·中精力）',
+    '第2周·听力开耳（9.21–9.27）',
+    '本周目标：精听满5篇，阅读累计5篇，单词不断链',
+    '9月21日（周一）单词：过新词40个（45分钟·中精力）',
+    '9月21日（周一）精听第4篇：长对话（90分钟·中精力）',
+    '9月25日（周五）仔细阅读精做第4篇+单词复习（120分钟·高精力）',
+    '第3周·节奏稳定（9.28–10.4）',
+    '本周目标：精听累计9篇，生词本破100词，国庆不中断',
+    '9月28日（周一）精听第7篇：长对话（90分钟·中精力）',
+    '10月1日（周四）单词40个+泛听15min（90分钟·中精力）',
+    '第4周·加入讲座（10.5–10.11）',
+    '本周目标：开始精听Lectures（分值最重的题型），适应语速与学术词',
+    '10月5日（周一）单词：过新词40个（45分钟·中精力）',
+    '10月5日（周一）精听第10篇：讲座Lectures第1篇（90分钟·中精力）',
+    '10月9日（周五）仔细阅读精做第10篇+单词复习（120分钟·高精力）',
+    '第5周·中期检查（10.12–10.18）',
+    '本周目标：词汇进度过半（触发旅游兑换），听力正确率开始记录趋势',
+    '10月12日（周一）精听第13篇：讲座Lectures（90分钟·中精力）',
+    '10月16日（周五）检查点：核对词汇进度是否过半→达标则兑换旅游1次（15分钟·低精力）',
+    '10月18日（周日）词汇复盘+精听补1篇+周复盘（150分钟·中精力）',
+    '第6周·加速期（10.19–10.25）',
+    '本周目标：精听累计23篇，听力正确率对比第2周有上升',
+    '10月19日（周一）精听第16篇：讲座Lectures（90分钟·中精力）',
+    '10月25日（周日）词汇复盘+精听补1篇+周复盘（150分钟·中精力）',
+    '第7周·基础期收官（10.26–11.1）',
+    '本周目标：核心词一轮完成、精听≥30篇、阅读≥15篇，通过基础期验收',
+    '10月26日（周一）精听第19篇：讲座Lectures（90分钟·中精力）',
+    '11月1日（周日）基础期验收：核心词一轮完成、精听≥25篇（含周日补听）、阅读≥15篇、生词本≥300词（30分钟·中精力）',
+    '第8周·进入真题（11.2–11.8）',
+    '本周目标：完成第1套完整真题并彻底消化，找到薄弱题型',
+    '11月2日（周一）单词：转为每日复习30分钟（30分钟·中精力）',
+    '11月4日（周三）真题听力分项：1套听力计时+错题重听（90分钟·中精力）',
+    '11月7日（周六）完整真题第1套：严格计时130分钟（130分钟·高精力）',
+    '11月8日（周日）真题第1套消化：听力错题重听+阅读逐句+生词入本（150分钟·高精力）',
+    '第9周·真题+写作启动（11.9–11.15）',
+    '本周目标：第2套真题完成，作文模板（现象评论类）成型',
+    '11月9日（周一）单词复习30分钟（30分钟·中精力）',
+    '11月14日（周六）完整真题第2套：严格计时130分钟（130分钟·高精力）',
+    '11月15日（周日）真题第2套消化+作文模板1（现象评论类）整理（180分钟·高精力）',
+    '第10周·翻译+模板2（11.16–11.22）',
+    '本周目标：第3套真题完成，两个作文模板齐备',
+    '11月21日（周六）完整真题第3套：严格计时130分钟（130分钟·高精力）',
+    '第11周·得分率检查（11.23–11.29）',
+    '本周目标：第4套真题完成，听力+阅读合计得分率≥55%',
+    '11月28日（周六）完整真题第4套：严格计时130分钟（130分钟·高精力）',
+    '11月29日（周日）真题第4套消化+统计听读得分率（是否≥55%）（180分钟·高精力）',
+    '第12周·真题期收官（11.30–12.6）',
+    '本周目标：真题累计5套，错题本成型，通过真题期验收',
+    '12月5日（周六）完整真题第5套：严格计时130分钟（130分钟·高精力）',
+    '第13周·模考冲刺（12.7–12.13）',
+    '本周目标：全真模考1套并完成错题归因，生物钟对齐下午考试',
+    '12月12日（周六）全真模考第1套：下午15:00–17:25与考试同步（160分钟·高精力）',
+    '12月13日（周日）模考1错题归因：按词汇/听力/定位三类分（120分钟·中精力）',
+    '第14周·考前收尾（12.14–12.19）',
+    '本周目标：完成第2套模考、考前只复习不新学、顺利应考',
+    '12月16日（周三）全真模考第2套：最后一套近年真题，下午15:00–17:25同步考试时段（160分钟·高精力）',
+    '12月19日（周六）六级考试：下午15:00–17:25（160分钟·高精力）'
+  ].join('\n');
+
+  // ===== 断言工具 =====
+  // 便于在控制台排查：window.__PLAN / window.__api
+  window.__PLAN = PLAN;
+  window.__api = { Store: Store, Importer: Importer, today: TODAY };
+  var cases = [];
+  function test(name, fn) { cases.push({ name: name, fn: fn }); }
+  // 夹具用例：只在今天不晚于夹具起始日时执行，否则跳过（防止日期过期造成误报）
+  function fixtureTest(name, fn) { test(name, function () { return FIXTURE_OK ? fn() : 'skip'; }); }
+  function ok(cond, msg) { return cond ? null : (msg || '断言失败'); }
+
+  function parse(text, opts) { return Importer.ruleParse(text, opts || {}); }
+  function ms(plan, i) { return plan.milestones[i] || {}; }
+  function titles(plan) { return plan.tasks.map(function (t) { return t.title; }); }
+
+  // ===== 1. 真实计划：阶段与日期 =====
+  fixtureTest('真实 14 周计划 → 14 个阶段全部保留', function () {
+    var p = parse(PLAN);
+    return ok(p.milestones.length === 14, '期望 14 个阶段，实际 ' + p.milestones.length +
+      '；各阶段：' + p.milestones.map(function (m) { return m.title; }).join(' / '));
+  });
+
+  fixtureTest('真实计划 → 阶段起止日期与原文括号一致', function () {
+    var p = parse(PLAN);
+    var want = [
+      [0, Y + '-09-14', Y + '-09-20'],
+      [1, Y + '-09-21', Y + '-09-27'],
+      [2, Y + '-09-28', Y + '-10-04'],
+      [3, Y + '-10-05', Y + '-10-11'],
+      [5, Y + '-10-19', Y + '-10-25'],
+      [13, Y + '-12-14', Y + '-12-19']
+    ];
+    var bad = [];
+    want.forEach(function (w) {
+      var m = ms(p, w[0]);
+      if (m.startDate !== w[1] || m.targetDate !== w[2]) {
+        bad.push('第' + (w[0] + 1) + '个阶段 ' + (m.title || '') + ' 实际 ' + m.startDate + '→' + m.targetDate + '，期望 ' + w[1] + '→' + w[2]);
+      }
+    });
+    return ok(!bad.length, bad.join('\n'));
+  });
+
+  fixtureTest('真实计划 → 阶段区间不重叠、递增', function () {
+    var p = parse(PLAN);
+    var bad = [];
+    for (var i = 1; i < p.milestones.length; i++) {
+      if (p.milestones[i].startDate <= p.milestones[i - 1].targetDate) {
+        bad.push(p.milestones[i - 1].title + ' 止于 ' + p.milestones[i - 1].targetDate +
+          ' 但 ' + p.milestones[i].title + ' 起于 ' + p.milestones[i].startDate);
+      }
+    }
+    return ok(!bad.length, bad.join('\n'));
+  });
+
+  // ===== 2. 真实计划：任务与标题 =====
+  fixtureTest('真实计划 → 任务数与原文日期行数一致', function () {
+    var p = parse(PLAN);
+    var dateLine = /^\d{1,2}\s*月\s*\d{1,2}\s*[日号]/;
+    var expect = PLAN.split('\n').filter(function (l) { return dateLine.test(l.trim()); });
+    var expectTitles = {};
+    expect.forEach(function (l) {
+      var one = parse('# t\n截止日期：' + Store.addDays(TODAY, 120) + '\n\n## 第 1 周\n' + l.trim(), {}).tasks[0];
+      if (one) expectTitles[one.title] = l.slice(0, 24);
+    });
+    var gotTitles = {};
+    p.tasks.forEach(function (t) { gotTitles[t.title] = t.date; });
+    var missing = Object.keys(expectTitles).filter(function (k) { return gotTitles[k] === undefined; });
+    var extra = Object.keys(gotTitles).filter(function (k) { return expectTitles[k] === undefined; });
+    var bad = [];
+    if (missing.length) bad.push('丢失 ' + missing.length + ' 条：' + missing.slice(0, 4).join(' / '));
+    if (extra.length) bad.push('多出 ' + extra.length + ' 条：' + extra.slice(0, 4).join(' / '));
+    return ok(!bad.length, bad.join('\n'));
+  });
+
+  fixtureTest('真实计划 → 标题不含（周X）前缀、不含（时长·精力）残留', function () {
+    var p = parse(PLAN);
+    var bad = titles(p).filter(function (t) {
+      return /^[（(]\s*周[一二三四五六日天]/.test(t) || /[（(][^）)]*\d+\s*分钟[^）)]*[）)]/.test(t) ||
+        /中精力|低精力|高精力/.test(t);
+    });
+    return ok(!bad.length, bad.slice(0, 6).join('\n'));
+  });
+
+  fixtureTest('真实计划 → 正文时长不被挖空（严格计时130分钟）', function () {
+    var p = parse(PLAN);
+    var hit = p.tasks.filter(function (t) { return t.title.indexOf('严格计时130分钟') >= 0; });
+    return ok(hit.length >= 4, '匹配到 ' + hit.length + ' 条；相关标题：' +
+      titles(p).filter(function (t) { return t.indexOf('真题第') >= 0; }).slice(0, 3).join(' / '));
+  });
+
+  fixtureTest('真实计划 → 括号内时长作为预计时长（130/160/90）', function () {
+    var p = parse(PLAN);
+    var t130 = p.tasks.filter(function (t) { return t.title.indexOf('真题第1套') >= 0; })[0];
+    var t160 = p.tasks.filter(function (t) { return t.title.indexOf('六级考试') >= 0; })[0];
+    var t90 = p.tasks.filter(function (t) { return t.title.indexOf('精听第1篇') >= 0; })[0];
+    var bad = [];
+    if (!t130 || t130.estimateMin !== 130) bad.push('真题第1套 时长=' + (t130 && t130.estimateMin));
+    if (!t160 || t160.estimateMin !== 160) bad.push('六级考试 时长=' + (t160 && t160.estimateMin));
+    if (!t90 || t90.estimateMin !== 90) bad.push('精听第1篇 时长=' + (t90 && t90.estimateMin));
+    return ok(!bad.length, bad.join('，'));
+  });
+
+  fixtureTest('真实计划 → 精力与日期正确（低精力15分钟那条）', function () {
+    var p = parse(PLAN);
+    var t = p.tasks.filter(function (x) { return x.title.indexOf('确认六级报名') >= 0; })[0];
+    if (!t) return ok(false, '没找到「确认六级报名」任务');
+    var bad = [];
+    if (t.date !== Y + '-09-14') bad.push('日期=' + t.date);
+    if (t.estimateMin !== 15) bad.push('时长=' + t.estimateMin);
+    if (t.energy !== 'low') bad.push('精力=' + t.energy);
+    return ok(!bad.length, bad.join('，'));
+  });
+
+  fixtureTest('真实计划 → 无 2027 假日期、无阶段超限警告', function () {
+    var p = parse(PLAN);
+    var fake = p.tasks.filter(function (t) { return t.date.indexOf('2027') === 0; });
+    var overWarn = p.warnings.filter(function (w) { return w.reason.indexOf('阶段超过') >= 0; });
+    return ok(!fake.length && !overWarn.length,
+      '假日期 ' + fake.length + ' 条；超限警告 ' + overWarn.length + ' 条');
+  });
+
+  // ===== 3. 无换行兜底 =====
+  fixtureTest('整段无换行粘贴 → 与带换行结果一致', function () {
+    var a = parse(PLAN), b = parse(PLAN.replace(/\n/g, ''));
+    var bad = [];
+    if (b.milestones.length !== a.milestones.length) bad.push('阶段 ' + b.milestones.length + ' vs ' + a.milestones.length);
+    if (b.tasks.length !== a.tasks.length) bad.push('任务 ' + b.tasks.length + ' vs ' + a.tasks.length);
+    var hasSplitWarn = b.warnings.some(function (w) { return w.reason.indexOf('缺少换行') >= 0; });
+    if (!hasSplitWarn) bad.push('未给出「缺少换行，已自动切分」提示');
+    return ok(!bad.length, bad.join('；'));
+  });
+
+  // ===== 4. 历史回归：假日期 =====
+  test('回归 → 量值与比例不产生日期', function () {
+    var cases2 = [
+      ['- 今天 跑 5.5 公里', 1],
+      ['- 今天 读 2 chapters', 1],
+      ['- 今天 add 3 items', 1],
+      ['- 今天 完成度 2/3', 1],
+      ['- 今天 看 1.5 小时视频', 1]
+    ];
+    var bad = [];
+    cases2.forEach(function (c) {
+      var p = parse('# t\n截止日期：' + Y + '-10-20\n\n## 第 1 周\n' + c[0]);
+      if (p.tasks.length !== c[1]) { bad.push(c[0] + ' → ' + p.tasks.length + ' 条'); return; }
+      if (p.tasks.filter(function (t) { return t.date.indexOf('2027') === 0; }).length) bad.push(c[0] + ' → 出现 2027 假日期');
+    });
+    return ok(!bad.length, bad.join('\n'));
+  });
+
+  // ===== 5. 历史回归：标题不被挖空 =====
+  test('回归 → 「5 分钟演讲」标题完整、时长用默认值', function () {
+    var p = parse('# t\n截止日期：' + Store.addDays(TODAY, 30) + '\n\n## 第 1 周\n- ' + Store.addDays(TODAY, 1) + ' 完成一次 5 分钟演讲（选做）');
+    var t = p.tasks[0];
+    if (!t) return ok(false, '未解析出任务');
+    var bad = [];
+    if (t.title.indexOf('5 分钟演讲') < 0) bad.push('标题=' + t.title);
+    if (t.estimateMin < 20) bad.push('时长被压低为 ' + t.estimateMin);
+    return ok(!bad.length, bad.join('，'));
+  });
+
+  // ===== 6. 历史回归：各种日期写法 =====
+  test('回归 → Day N / 第一天 / 下周一 / Mon / Week 2 换算', function () {
+    var head = '# t\n截止日期：' + Store.addDays(TODAY, 60) + '\n\n## 第 1 周\n';
+    var p = parse(head + '- Day 1 甲（30分钟）\n- 第一天 乙（30分钟）\n- Mon 丁（30分钟）\n- 下周一 丙（30分钟）');
+    var byTitle = {};
+    p.tasks.forEach(function (t) { byTitle[t.title] = t.date; });
+    var bad = [];
+    var day1 = TODAY;
+    var mon = Store.addDays(TODAY, (8 - Store.parseDate(TODAY).getDay()) % 7);  // 最近的周一（含今天）
+    if (byTitle['甲'] !== day1) bad.push('Day 1 → ' + byTitle['甲'] + '（期望 ' + day1 + '）');
+    if (byTitle['乙'] !== day1) bad.push('第一天 → ' + byTitle['乙'] + '（期望 ' + day1 + '）');
+    if (byTitle['丁'] !== mon) bad.push('Mon → ' + byTitle['丁'] + '（期望 ' + mon + '）');
+    if (byTitle['丙'] !== Store.addDays(mon, 7)) bad.push('下周一 → ' + byTitle['丙'] + '（期望 ' + Store.addDays(mon, 7) + '）');
+    return ok(!bad.length, bad.join('；'));
+  });
+
+  // ===== 7. 上限与截断 =====
+  test('上限 → 320 条任务截断为 300 并提示', function () {
+    var lines = ['# t', '截止日期：' + Y + '-12-31', '', '## 第 1 个月'];
+    for (var i = 1; i <= 320; i++) lines.push('- ' + Y + '-10-' + ((i % 28) + 1) + ' 任务 ' + i + '（30分钟）');
+    var p = parse(lines.join('\n'));
+    var warned = p.warnings.some(function (w) { return w.reason.indexOf('300') >= 0; });
+    return ok(p.tasks.length === 300 && warned, '任务 ' + p.tasks.length + ' 条，提示 ' + warned);
+  });
+
+  test('截断 → 超 2 万字符给出提示', function () {
+    var p = parse('# t\n截止日期：' + Y + '-10-01\n\n## 第 1 周\n- 今天 ' + new Array(21000).join('字') + '（30分钟）');
+    return ok(p.truncated === true && p.warnings.some(function (w) { return w.reason.indexOf('20000') >= 0; }),
+      'truncated=' + p.truncated);
+  });
+
+  // ===== 8. 过去任务逐条列出 =====
+  test('过去任务 → 不导入但逐条列出', function () {
+    var p1 = Y + '-09-01', p2 = Y + '-09-05';
+    if (TODAY <= p2) return 'skip';
+    var p = parse('# t\n截止日期：' + Y + '-12-01\n\n## 第 1 周\n- ' + p1 + ' 旧任务甲\n- ' + p2 + ' 旧任务乙\n- ' + Store.addDays(TODAY, 1) + ' 新任务');
+    var hasNew = p.tasks.some(function (t) { return t.title === '新任务'; });
+    var droppedOk = p.dropped.some(function (d) { return d.title === '旧任务甲'; }) &&
+      p.dropped.some(function (d) { return d.title === '旧任务乙'; });
+    return ok(hasNew && droppedOk, '新任务=' + hasNew + '，dropped=' + JSON.stringify(p.dropped));
+  });
+
+  // ===== 渲染 =====
+  function render() {
+    var pass = 0, fail = 0, skip = 0;
+    var html = '';
+    cases.forEach(function (c) {
+      var r;
+      try { r = c.fn(); } catch (e) { r = '抛异常：' + (e && e.message); }
+      var state = r === 'skip' ? 'skip' : (r ? 'fail' : 'pass');
+      if (state === 'pass') pass++; else if (state === 'fail') fail++; else skip++;
+      html += '<div class="case ' + (state === 'fail' ? 'fail' : '') + '">' +
+        '<div class="head"><span class="badge ' + state + '">' +
+        (state === 'pass' ? '通过' : state === 'fail' ? '失败' : '跳过') + '</span>' +
+        '<span class="name">' + c.name + '</span></div>' +
+        (r && r !== 'skip' ? '<p class="detail">' + String(r).replace(/</g, '&lt;') + '</p>' : '') +
+        '</div>';
+    });
+    document.getElementById('list').innerHTML = html;
+    var sum = document.getElementById('sum');
+    sum.className = 'sum ' + (fail ? 'bad' : 'ok');
+    sum.textContent = (fail ? '❌ ' : '✅ ') + '通过 ' + pass + ' 项' +
+      (fail ? '，失败 ' + fail + ' 项' : '') + (skip ? '，跳过 ' + skip + ' 项' : '') +
+      '（共 ' + cases.length + ' 项，今天 ' + TODAY + '）';
+  }
+
+  document.getElementById('run').addEventListener('click', render);
+  render();
+})();
+</script>
+</body>
+</html>

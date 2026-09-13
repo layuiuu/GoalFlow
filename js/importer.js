@@ -22,7 +22,7 @@
   var MAX_TEXT = 20000;        // textarea 允许的最大字符数
   var AI_TEXT_LIMIT = 20000;   // 送入 AI 的文本上限
   var MAX_TASKS = 300;         // 单次导入任务上限
-  var MAX_MILESTONES = 12;     // 阶段上限
+  var MAX_MILESTONES = 24;     // 阶段上限（周计划常见 12-20 个阶段）
   var HORIZON_MAX_DAYS = 180;  // 导入跨度上限
   var UNDATED_PER_DAY = 3;     // 无日期任务每天最多排几条
 
@@ -215,8 +215,38 @@
     return { date: '', token: '' };
   }
 
+  // 区间里出现的日期是确定的，不受"日 ≤ 12 可能是小数/比例"的限制
+  var RANGE_CTX_BEFORE = /(?:截止|deadline|due|第\s*[0-9一二两三四五六七八九十]{1,3}\s*周|本周|下周|周|星期|礼拜)\s*[（(【\[]?\s*$/i;
+
+  /**
+   * 识别「A–B」形式的日期区间，如 9.28–10.4 / 10.5–10.11 / 9月28日-10月4日
+   * 返回 { start, end, tokens:[整段文本] } 或 null
+   * 误判防护：必须位于括号内、或两侧日号都 > 12、或紧跟在「第N周/截止/周X」等语境之后
+   */
+  function findDateRangePair(s, base, assumeBracket) {
+    var re = /(\d{1,2})([.月/])(\d{1,2})\s*[日号]?\s*(?:[–—~～]|至|到|-)\s*(\d{1,2})([.月/])(\d{1,2})\s*[日号]?/g;
+    var m;
+    while ((m = re.exec(s))) {
+      var m1 = +m[1], d1 = +m[3], m2 = +m[4], d2 = +m[6];
+      if (m1 < 1 || m1 > 12 || d1 < 1 || d1 > 31) continue;
+      if (m2 < 1 || m2 > 12 || d2 < 1 || d2 > 31) continue;
+      var before = s.slice(0, m.index);
+      var inBracket = !!assumeBracket || /[（(【\[]\s*$/.test(before);
+      if (!inBracket && !(d1 > 12 && d2 > 12) && !RANGE_CTX_BEFORE.test(before)) continue;
+      var after = s.slice(m.index + m[0].length);
+      if (UNIT_AFTER.test(after) || /^\s*[:：]\s*\d/.test(after)) continue;  // 1.5–2.5 公里 / 比例
+      var a = explicitMonthDay(m1, d1, base);
+      var b = explicitMonthDay(m2, d2, base);
+      if (!a || !b || b < a) continue;
+      return { start: a, end: b, tokens: [m[0]] };
+    }
+    return null;
+  }
+
   /** 识别日期区间（9月15日-9月20日）→ { start, end, tokens } */
   function findDateRange(text, base) {
+    var pair = findDateRangePair(text, base);
+    if (pair) return pair;
     var first = findDate(text, base);
     if (!first.date) return { start: '', end: '', tokens: [] };
     var rest = text.split(first.token).join(' ');
@@ -246,26 +276,51 @@
     return best;
   }
 
-  /** 精力关键词 → 'high' | 'low' | '' */
+  /** 括号内的时长优先：任务真实时长通常写在行尾括号里（如（130分钟·高精力）） */
+  function findBracketMinutes(text) {
+    var re = /[（(][^（()）]{0,40}[)）]/g;
+    var m;
+    while ((m = re.exec(text))) {
+      var v = findMinutes(m[0]);
+      if (v.min) return v;
+    }
+    return null;
+  }
+
+  var ENERGY_HIGH = /高精力|高强度|高难度|最重要|优先完成/;
+  var ENERGY_LOW = /低精力|低强度|轻松|碎片|简单|轻量/;
+  var ENERGY_MID = /中精力|中强度|中难度/;
+
+  /** 精力关键词 → 'high' | 'mid' | 'low' | '' */
   function findEnergy(text) {
-    if (/高精力|高强度|高难度|最重要|优先完成/.test(text)) return 'high';
-    if (/低精力|轻松|碎片|简单|轻量/.test(text)) return 'low';
+    if (ENERGY_HIGH.test(text)) return 'high';
+    if (ENERGY_LOW.test(text)) return 'low';
+    if (ENERGY_MID.test(text)) return 'mid';
     return '';
   }
+
+  // 「纯标注括号」里允许出现的词：精力 + 时长单位 + 星期 + 约数词
+  var META_IN_BRACKET = new RegExp(
+    '(?:' +
+    '高精力|中精力|低精力|高强度|中强度|低强度|高难度|中难度|轻松|碎片|简单|轻量|最重要|优先完成' +
+    '|(?:个?\\s*小时)|hours?|hrs?|分钟|分|mins?|min|h' +
+    '|周[一二三四五六日天]|星期[一二三四五六日天]|礼拜[一二三四五六日天]|(?:mon|tues|tue|wed|thu|thur|thurs|fri|sat|sun)(?:day)?' +
+    '|约|大约|左右|每次|每天|每日|时长|建议|分钟左右' +
+    ')', 'gi');
 
   /** 标题净化：移除已消费的日期/时长 token、编号、装饰与「纯标注括号」 */
   function cleanTitle(text, tokens) {
     var s = String(text || '');
     var kept = [];
-    // 括号内若全部是时长/日期/精力标注则整体删除，否则原样保留
+    // 括号内若全部是时长/日期/精力/星期标注则整体删除，否则原样保留
     // 保留的括号先占位，避免随后的 token 剥离把括号里有意义的内容挖空
     s = s.replace(/[（(][^（()）]{0,30}[)）]/g, function (m) {
       var inner = m.slice(1, -1);
       if (!inner.trim()) return ' ';
-      var isMeta = !!findMinutes(inner).min || !!findDate(inner, today()).date || !!findEnergy(inner);
-      var hasExtra = /[，,。；;、:：a-zA-Z\u4e00-\u9fa5]/.test(
-        inner.replace(/(?:高精力|低精力|高强度|低强度|轻松|碎片|简单|轻量|分钟|小时|min|h|约|左右|每次|每天|每日)/gi, '')
-      );
+      var isMeta = !!findMinutes(inner).min || !!findDate(inner, today()).date ||
+        !!findDateRangePair(inner, today(), true) || !!findEnergy(inner);
+      var remainder = inner.replace(META_IN_BRACKET, '');
+      var hasExtra = /[，,。；;、:：a-zA-Z\u4e00-\u9fa5]/.test(remainder);
       if (isMeta && !hasExtra) return ' ';
       kept.push(m);
       return '\u0001' + (kept.length - 1) + '\u0001';
@@ -302,6 +357,37 @@
   var RE_META = /^(目标名称|目标|标题|计划名称|计划|title|plan)\s*[:：]\s*(.+)$/i;
   var RE_DEADLINE = /^(截止日期|截止时间|截止|deadline|due)\s*[:：]\s*(.+)$/i;
   var RE_NOISE = /^(以下是|下面是|下面是我|注[：:]|备注[：:]|说明[：:]|提示[：:]|前言|注意[：:]|要求[：:]|原则[：:])/;
+  // 阶段说明行（如「本周目标：…」）：应作为阶段说明，不要因为句中出现「第2周」而被当成任务
+  var RE_PHASE_NOTE = /^(?:本周目标|本月目标|阶段目标|本周重点|阶段重点|本周任务|本周安排|阶段安排)\s*[:：]\s*(.*)$/;
+
+  /* ------- 无换行兜底：把结构边界补成换行（从聊天窗口复制常丢换行） ------- */
+  // 只在两种强特征处切：①「第N周」后带分隔符；②「M月D日（周X）」
+  // 注意：日期前必须用 [^\d] 卡边界，否则「11月1日」会被从第二位数字处切开，误judge成 1月1日
+  var SPLIT_MARK = '\u0002';
+  var RE_DATE_SIG = /\d{1,2}\s*月\s*\d{1,2}\s*[日号]\s*[（(]\s*周/g;
+
+  function markBoundaries(s) {
+    return s
+      .replace(/(^|[\s\S])(?=第\s*[0-9一二两三四五六七八九十]{1,3}\s*周\s*[·.、:：])/g, '$1' + SPLIT_MARK)
+      .replace(/(^|[^\d])(?=\d{1,2}\s*月\s*\d{1,2}\s*[日号]\s*[（(]\s*周)/g, '$1' + SPLIT_MARK);
+  }
+
+  function splitStructure(lines) {
+    var out = [];
+    var did = false;
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      var marks = (line.match(RE_DATE_SIG) || []).length;
+      if (line.length > 120 || marks >= 2) {
+        var parts = markBoundaries(line).split(SPLIT_MARK)
+          .map(function (x) { return x.trim(); })
+          .filter(function (x) { return !!x; });
+        if (parts.length > 1) { out = out.concat(parts); did = true; continue; }
+      }
+      out.push(line);
+    }
+    return { lines: out, did: did };
+  }
 
   /* ---------------- 规则解析 ---------------- */
 
@@ -323,6 +409,14 @@
       raw.warnings.push({ reason: '文本超过 ' + MAX_TEXT + ' 字符，仅解析前 ' + MAX_TEXT + ' 字符，建议分段导入', text: '' });
     }
     var lines = full.slice(0, MAX_TEXT).replace(/\r\n?/g, '\n').split('\n');
+    var split = splitStructure(lines);
+    lines = split.lines;
+    if (split.did) {
+      raw.warnings.push({
+        reason: '检测到内容缺少换行，已按「第N周」与日期边界自动切分为 ' + lines.length + ' 行；若结果有偏差，建议改用文件导入或手动换行',
+        text: ''
+      });
+    }
 
     var cursor = base;
     var cursorCount = 0;
@@ -358,6 +452,19 @@
       }
       if (RE_NOISE.test(t)) { continue; }
 
+      // 阶段说明行 → 归入当前阶段的 detail（避免句中的「第2周」被当成日期）
+      var mNote = t.match(RE_PHASE_NOTE);
+      if (mNote) {
+        var noteText = cleanTitle(mNote[1], []);
+        if (lastMs && !lastMs.detail) { lastMs.detail = noteText.slice(0, 120); continue; }
+        if (lastTask) {
+          lastTask.desc = ((lastTask.desc ? lastTask.desc + '；' : '') + noteText).slice(0, 100);
+          continue;
+        }
+        if (!raw.title && !seenTitle && noteText) { raw.title = noteText.slice(0, 60); seenTitle = true; continue; }
+        continue;
+      }
+
       // 引用：剥掉前缀后按同样规则处理
       var mq = t.match(RE_QUOTE);
       if (mq) {
@@ -374,15 +481,19 @@
           seenTitle = true;
           continue;
         }
-        var headRange = findDateRange(phase.body || phase.label, base);
-        var headTitle = cleanTitle(phase.body, headRange.tokens);
+        // 「本周目标：…」若和阶段标题写在同一行（例如无换行的粘贴），拆出来作为阶段说明
+        var bodyParts = String(phase.body || '').split(/本周目标\s*[:：]/);
+        var mainBody = bodyParts[0];
+        var goalNote = bodyParts.length > 1 ? bodyParts.slice(1).join(' ').trim().slice(0, 120) : '';
+        var headRange = findDateRange(mainBody || phase.label, base);
+        var headTitle = cleanTitle(mainBody, headRange.tokens);
         if (!headTitle) headTitle = phase.label;
         if (!headTitle) headTitle = '阶段 ' + (raw.milestones.length + 1);
         lastMs = {
           title: (phase.labelPrefix && headTitle.indexOf(phase.labelPrefix) < 0
             ? phase.labelPrefix + ' · ' + headTitle
             : headTitle).slice(0, 30),
-          detail: '',
+          detail: goalNote,
           startDate: headRange.start || '',
           targetDate: headRange.end || ''
         };
@@ -521,9 +632,11 @@
    */
   function makeTask(text, explicitDate, base, cursor, cursorCount) {
     var range = findDateRange(text, base);
-    var fm = findMinutes(text);
+    var bracketMin = findBracketMinutes(text);
+    var fm = bracketMin || findMinutes(text);
     var fe = findEnergy(text);
-    var title = cleanTitle(text, range.tokens.concat([fm.token]));
+    // 括号里已给出时长时，只删括号、不再剥离正文里的时长（避免「严格计时130分钟」被挖空）
+    var title = cleanTitle(text, range.tokens.concat(bracketMin ? [] : [fm.token]));
     if (!title) return null;
     // 能量词从标题里去掉（只作为属性）
     title = title.replace(/\s*(?:高精力|低精力|高强度|低强度|轻松|碎片|简单|轻量)\s*/g, ' ').replace(/\s+/g, ' ').trim();
@@ -700,7 +813,14 @@
       });
     });
     if ((raw.milestones || []).length > MAX_MILESTONES) {
-      warnings.push({ reason: '阶段超过 ' + MAX_MILESTONES + ' 个，已保留前 ' + MAX_MILESTONES + ' 个', text: '' });
+      var droppedMs = (raw.milestones || []).slice(MAX_MILESTONES).map(function (m) {
+        return String((m && m.title) || '').trim();
+      }).filter(Boolean);
+      warnings.push({
+        reason: '阶段超过 ' + MAX_MILESTONES + ' 个，已保留前 ' + MAX_MILESTONES + ' 个；未导入：' +
+          droppedMs.slice(0, 8).join('、') + (droppedMs.length > 8 ? ' 等' : ''),
+        text: ''
+      });
     }
     var auto = false;
     if (!milestones.length) {
@@ -710,7 +830,13 @@
     }
     assignMilestoneDates(milestones, base, deadline);
 
-    if (pastCount) warnings.push({ reason: '有 ' + pastCount + ' 条任务早于今天，未导入（见下方明细）', text: '' });
+    if (pastCount) {
+      warnings.push({
+        reason: '有 ' + pastCount + ' 条任务早于今天，未导入' +
+          (pastCount > dropped.length ? '（下方仅列出前 ' + dropped.length + ' 条）' : '（见下方明细）'),
+        text: ''
+      });
+    }
     if (dup) warnings.push({ reason: '已自动忽略 ' + dup + ' 条重复任务（同日期同标题）', text: '' });
     if (invalid) warnings.push({ reason: '已忽略 ' + invalid + ' 条缺少标题或日期格式无效的任务', text: '' });
 
@@ -739,32 +865,6 @@
   }
 
   /* ---------------- 供 UI 使用的小工具 ---------------- */
-
-  /**
-   * 日期下拉选项：today..horizon，按周分组（optgroup）
-   * @returns [{ group, items: [{ date, label }] }]
-   */
-  function dateOptions(from, to) {
-    var base = from || today();
-    var end = to && to >= base ? to : Store.addDays(base, HORIZON_MAX_DAYS);
-    var groups = [];
-    var cur = base, week = null, count = 0;
-    var names = ['今天', '明天', '后天'];
-    while (cur <= end && count < 190) {
-      var wIdx = Math.floor(Store.daysBetween(base, cur) / 7);
-      if (!week || week.idx !== wIdx) {
-        week = { idx: wIdx, group: wIdx === 0 ? '本周' : ('第 ' + (wIdx + 1) + ' 周'), items: [] };
-        groups.push(week);
-      }
-      var dayDiff = Store.daysBetween(base, cur);
-      var md = (Store.parseDate(cur).getMonth() + 1) + '-' + Store.parseDate(cur).getDate();
-      var label = dayDiff < 3 ? (names[dayDiff] + ' ' + md) : (md + ' 周' + Store.weekdayCN(cur));
-      week.items.push({ date: cur, label: label });
-      cur = Store.addDays(cur, 1);
-      count++;
-    }
-    return groups;
-  }
 
   /** 预计每日负荷（分钟） */
   function dailyLoad(tasks) {
@@ -800,7 +900,6 @@
     normalize: normalize,
     flexDate: flexDate,
     horizonEnd: horizonEnd,
-    dateOptions: dateOptions,
     dailyLoad: dailyLoad
   };
 })(window);

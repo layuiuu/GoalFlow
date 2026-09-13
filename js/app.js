@@ -657,8 +657,8 @@
       '<p class="card-sub">把你从 ChatGPT / Claude 等生成的计划粘贴进来，GoalFlow 会解析成「阶段大纲 + 未来 7 天任务」，确认后再导入</p>' +
       (AI.useMock() ? '<div class="notice info" style="margin-bottom:10px"><span>当前无 API Key，将使用基础规则解析；在「设置 → API 配置」填入 Key 后可用 AI 精准解析</span></div>' : '') +
       '<div class="form-item"><label>计划内容</label>' +
-      '<textarea id="ip-text" maxlength="' + Importer.MAX_TEXT + '" placeholder="把外部 AI 生成的计划粘贴到这里；也可以留空，只填下面的目标名称先建一个空目标">' + esc(p.text || '') + '</textarea>' +
-      '<p class="form-hint">支持 Markdown 标题与列表；日期可写 2026-09-15 / 9月15日 / Day 1 / 周一等。只有未来 7 天的内容会成为任务，更远的内容归入阶段大纲</p></div>' +
+      '<textarea id="ip-text" maxlength="' + Importer.MAX_TEXT + '" placeholder="把外部 AI 生成的计划粘贴到这里；也可以选一个 .md / .txt 文件，或留空只填目标名称先建一个空目标">' + esc(p.text || '') + '</textarea>' +
+      '<p class="form-hint">支持 Markdown 标题与列表；日期可写 2026-09-15 / 9月15日 / Day 1 / 周一等。导入范围覆盖整份计划（上限 300 条），早于今天的任务会列出但不导入</p></div>' +
       '<div class="form-item"><label>目标名称（选填，留空则用计划中的标题）</label>' +
       '<input id="ip-title" maxlength="60" value="' + esc(p.title || '') + '" placeholder="例：两个月准备数学建模竞赛"></div>' +
       '<div class="form-2col">' +
@@ -668,8 +668,33 @@
       '<p class="form-hint">截止时间留空则采用计划里的日期，都没有时默认 60 天后</p>' +
       '<div class="btn-row"><button class="btn ghost" data-action="close-modal">取消</button>' +
       '<button class="btn primary" data-action="import-parse">解析并预览</button></div>' +
-      '<div style="margin-top:10px;text-align:center">' +
+      '<div class="chip-row" style="margin-top:10px;justify-content:center">' +
+      '<button class="chip xs" data-action="pick-import-file">📄 选择 .md / .txt 文件</button>' +
       '<button class="chip xs" data-action="copy-prompt">📋 复制「给 AI 的计划模板」</button></div>');
+  }
+
+  /** 读取 .md / .txt 计划文件并填入文本框（与粘贴共用同一条解析链路） */
+  function readPlanFile(file) {
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+      var text = String(reader.result || '').replace(/^\uFEFF/, '');
+      var box = $('#ip-text');
+      if (!box) { toast('导入弹窗已关闭，请重新打开', true); return; }
+      box.value = text;
+      var titleEl = $('#ip-title');
+      if (titleEl && !titleEl.value.trim()) {
+        var first = text.split('\n').map(function (l) { return l.trim(); }).filter(Boolean)[0] || '';
+        // 只在文件首行明确是标题时预填（# 标题 或「目标：…」），避免把「第1周…」当成目标名
+        var m = first.match(/^#{1,6}\s*(.+)$/) || first.match(/^(?:目标名称|目标|标题|计划名称|计划)\s*[:：]\s*(.+)$/);
+        if (m) titleEl.value = m[1].replace(/截止.*$/, '').trim().slice(0, 60);
+      }
+      var over = text.length > Importer.MAX_TEXT;
+      toast('已读取「' + file.name + '」' + text.length + ' 字符' +
+        (over ? '，超出 ' + Importer.MAX_TEXT + ' 字符将只解析前半部分' : '') + '，点「解析并预览」');
+    };
+    reader.onerror = function () { toast('读取文件失败，请改用粘贴', true); };
+    reader.readAsText(file, 'utf-8');
   }
 
   function copyPromptTemplate() {
@@ -825,14 +850,6 @@
     var r = state.lastImport;
     if (!r) return;
     var today = Store.todayStr();
-    var groups = Importer.dateOptions(today, r.goal.deadline);
-    var dateOpts = function (sel) {
-      return groups.map(function (g) {
-        return '<optgroup label="' + esc(g.group) + '">' + g.items.map(function (d) {
-          return '<option value="' + d.date + '"' + (d.date === sel ? ' selected' : '') + '>' + esc(d.label) + '</option>';
-        }).join('') + '</optgroup>';
-      }).join('');
-    };
     var minList = [15, 30, 45, 60, 90, 120];
     var minOpts = function (sel) {
       var list = minList.slice();
@@ -878,7 +895,8 @@
       html += '<div class="notice warn" style="margin-top:8px"><span>原文过长，只解析了前 ' + Importer.AI_TEXT_LIMIT + ' 字符，建议分段导入</span></div>';
     }
     if (r.dropped && r.dropped.length) {
-      html += '<details class="ip-warn" style="margin-top:8px"><summary>🗑 有 ' + r.dropped.length + ' 条任务未导入（早于今天）</summary><ul>' +
+      html += '<details class="ip-warn" style="margin-top:8px"><summary>🗑 有 ' + r.dropped.length + ' 条任务未导入（早于今天）' +
+        (r.dropped.length >= 40 ? '，仅列出前 40 条' : '') + '</summary><ul>' +
         r.dropped.map(function (d) { return '<li>' + esc(d.date) + ' · ' + esc(d.title) + '</li>'; }).join('') + '</ul></details>';
     }
     html += '</div>';
@@ -905,7 +923,8 @@
 
     // 任务（勾选 + 标题/日期/时长/精力微调 + 增删）
     html += '<div class="card"><h3>任务 <span class="tag">' + r.tasks.length + ' 条</span></h3>' +
-      '<p class="card-sub" style="margin-bottom:8px">标题、日期、时长、精力都能直接改；取消勾选可跳过这条。原文里早于今天的任务不会导入。</p>';
+      '<p class="card-sub" style="margin-bottom:8px">标题、日期、时长、精力都能直接改；取消勾选可跳过这条。原文里早于今天的任务不会导入。</p>' +
+      '<p class="form-hint" style="margin:-4px 0 8px">提示：AI 调整只覆盖未来 7 天的任务，更远的任务会随时间自动进入可调整范围</p>';
     if (r.tasks.length) {
       html += r.tasks.map(function (t, i) {
         return '<div class="ip-task" style="margin-bottom:8px">' +
@@ -914,7 +933,7 @@
           '<input class="js-ip-task ip-title-input" data-idx="' + i + '" data-field="title" maxlength="60" value="' + esc(t.title) + '" placeholder="任务标题">' +
           (t.desc ? '<p class="ip-desc">' + esc(t.desc) + '</p>' : '') +
           '<div class="ip-fields">' +
-          '<select class="js-ip-field" data-idx="' + i + '" data-field="date">' + dateOpts(t.date) + '</select>' +
+          '<input type="date" class="js-ip-field" data-idx="' + i + '" data-field="date" min="' + today + '" max="' + esc(r.goal.deadline) + '" value="' + esc(t.date) + '">' +
           '<select class="js-ip-field" data-idx="' + i + '" data-field="estimateMin">' + minOpts(t.estimateMin) + '</select>' +
           '<select class="js-ip-field" data-idx="' + i + '" data-field="energy">' + enOpts(t.energy) + '</select>' +
           '<button class="icon-btn" style="color:var(--danger)" data-action="ip-del-task" data-idx="' + i + '">删</button>' +
@@ -2365,6 +2384,7 @@
     /* 计划导入 */
     'import-parse': importParse,
     'copy-prompt': copyPromptTemplate,
+    'pick-import-file': function () { $('#import-plan-file').click(); },
     'ip-retry-ai': retryImportAI,
     'ip-add-task': addImportTask,
     'ip-add-ms': addImportMilestone,
@@ -2551,6 +2571,13 @@
       }
     };
     reader.readAsText(file);
+  });
+
+  /* 计划文件导入（.md / .txt）：读取后走同一条解析链路 */
+  $('#import-plan-file').addEventListener('change', function (e) {
+    var file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    readPlanFile(file);
   });
 
   /* 点击遮罩关闭弹窗 */
