@@ -244,7 +244,7 @@
       missNote: '',       // 自定义原因文本（missReason === 'custom' 时使用）
       locked: false,      // 🔒 用户锁定：AI 不可调整
       order: 50,
-      source: 'manual',   // ai | rule | manual
+      source: 'manual',   // ai | rule | manual | import
       ruleId: '',
       batchId: '',
       demo: false,

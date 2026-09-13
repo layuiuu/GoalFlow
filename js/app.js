@@ -8,7 +8,8 @@
   'use strict';
 
   var Store = global.Store, Rules = global.Rules, Agg = global.Agg,
-      AI = global.AI, Adjust = global.Adjust, Chart = global.Chart;
+      AI = global.AI, Adjust = global.Adjust, Chart = global.Chart,
+      Importer = global.Importer;
 
   /* ---------------- 小工具 ---------------- */
 
@@ -44,7 +45,10 @@
     editingTaskId: null,
     lastPreview: null,   // {scope, goalId, trigger, summary, changes}
     lastOutline: null,   // AI 生成的大纲预览
-    lastPlan: null       // AI 生成的周计划预览
+    lastPlan: null,      // AI 生成的周计划预览
+    lastImport: null,    // 粘贴导入的解析结果（预览中可微调）
+    importText: '',      // 导入原文（重新解析时保留，避免用户丢失内容）
+    importHint: null     // { title, type, deadline } 弹窗里的填写值
   };
 
   /* ---------------- 弹窗 / 提示 ---------------- */
@@ -126,8 +130,8 @@
 
     if (!goals.length) {
       el.innerHTML = mockBanner() +
-        '<div class="card">' + emptyHtml('🎯', '还没有目标。先创建一个目标，AI 帮你拆解成每日任务。',
-          '<div style="margin-top:12px"><button class="btn primary" data-action="tab" data-page="goals">去创建目标</button></div>') + '</div>' +
+        '<div class="card">' + emptyHtml('🎯', '还没有目标。导入一份计划（或在 ChatGPT/Claude 生成后粘贴进来），GoalFlow 帮你排成每日任务。',
+          '<div style="margin-top:12px"><button class="btn primary" data-action="tab" data-page="goals">＋ 导入计划 / 新建目标</button></div>') + '</div>' +
         (Store.getGoals().length ? '' :
           '<button class="btn ghost block" data-action="load-demo">载入演示数据（含学习/健身/口语三个目标）</button>');
       return;
@@ -238,6 +242,7 @@
       '<span class="tag" style="color:' + en.color + '">' + en.name + '</span>' +
       '<span class="tag">⏱ ' + t.estimateMin + ' 分钟</span>' +
       (t.source === 'rule' || t.locked ? '<span class="tag lock-tag">🔒 固定</span>' : '') +
+      (t.source === 'import' ? '<span class="tag">📥 导入</span>' : '') +
       (t.status === 'skipped' ? '<span class="tag">⏭️ 已跳过</span>' : '') +
       '</div>' +
       '<p class="task-title">' + esc(t.title) + '</p>' +
@@ -518,15 +523,13 @@
   }
 
   /**
-   * 新建目标两步引导：第 1 步「目标是什么」→ 第 2 步「投入与约束」
-   * 编辑模式直接进入第 2 步（全字段）
+   * 新建目标：粘贴外部 AI 计划 → 解析 → 预览微调 → 导入（见下方导入模块）
+   * 编辑目标：单页表单，直接改全部字段
    */
   function openGoalModal(goal) {
-    state.editingGoalId = goal ? goal.id : null;
-    state.goalDraft = goal ? {
-      title: goal.title, type: goal.type, deadline: goal.deadline
-    } : { title: '', type: '', deadline: Store.addDays(Store.todayStr(), 60) };
-    renderGoalForm(goal ? 2 : 1, goal);
+    if (!goal) { openImportModal(); return; }
+    state.editingGoalId = goal.id;
+    renderGoalForm(goal);
   }
 
   /** 非必填字段的示例文案（按目标类型） */
@@ -538,34 +541,25 @@
     other: { base: '刚起步，还没头绪', pref: '碎片时间为主，周末更充裕' }
   };
 
-  function renderGoalForm(step, goal) {
-    state.goalFormStep = step;
+  /** 编辑目标：单页表单（新建入口已改为粘贴导入，不再走两步向导） */
+  function renderGoalForm(goal) {
     var g = goal || {};
-    var d = state.goalDraft || {};
+    var today = Store.todayStr();
     var typeOpts = function (selected) {
-      return '<option value=""' + (selected ? '' : ' hidden') + '>请选择</option>' +
-        Store.GOAL_TYPES.map(function (t) {
-          return '<option value="' + t.id + '"' + (selected === t.id ? ' selected' : '') + '>' + t.name + '</option>';
-        }).join('');
+      return Store.GOAL_TYPES.map(function (t) {
+        return '<option value="' + t.id + '"' + (selected === t.id ? ' selected' : '') + '>' + t.name + '</option>';
+      }).join('');
     };
-    // 第 1 步字段（目标是什么）——唯一的目标描述输入框
-    var step1Fields =
-      '<div class="form-item"><label>目标描述 *</label>' +
-      '<input id="gf-title" value="' + esc(d.title || '') + '" placeholder="例：两个月准备数学建模竞赛"></div>' +
-      '<div class="form-2col">' +
-      '<div class="form-item"><label>目标类型 *</label><select id="gf-type">' + typeOpts(d.type || '') + '</select></div>' +
-      '<div class="form-item"><label>截止时间 *</label><input type="date" id="gf-deadline" value="' + esc(d.deadline || Store.addDays(Store.todayStr(), 60)) + '"></div>' +
-      '</div>';
-    var step1 =
-      '<div class="step-ind">第 1 步 / 共 2 步 · 先告诉 AI 目标是什么</div>' +
-      step1Fields +
-      '<button class="btn primary block" data-action="goal-step-next">下一步：投入与约束 →</button>';
     var prChips = Store.PRIORITIES.map(function (p) {
       return '<button class="chip ' + ((g.priority || Store.loadSettings().defaultPriority) === p.id ? 'active' : '') + '" data-action="chip-pick" data-group="prio" data-val="' + p.id + '">' + p.name + '</button>';
     }).join('');
-    var step2 =
-      '<div class="step-ind">第 2 步 / 共 2 步 · 每天能投入多少时间</div>' +
-      step1Fields +
+    openModal('<h2>编辑目标</h2>' +
+      '<div class="form-item"><label>目标描述 *</label>' +
+      '<input id="gf-title" maxlength="60" value="' + esc(g.title || '') + '" placeholder="例：两个月准备数学建模竞赛"></div>' +
+      '<div class="form-2col">' +
+      '<div class="form-item"><label>目标类型 *</label><select id="gf-type">' + typeOpts(g.type) + '</select></div>' +
+      '<div class="form-item"><label>截止时间 *</label><input type="date" id="gf-deadline" min="' + today + '" value="' + esc(g.deadline || Store.addDays(today, 60)) + '"></div>' +
+      '</div>' +
       '<div class="form-2col">' +
       '<div class="form-item"><label>工作日可用（分钟）</label><input type="number" id="gf-weekday" class="js-goal-min" min="0" step="10" value="' + (g.weekdayMinutes != null ? g.weekdayMinutes : 60) + '"></div>' +
       '<div class="form-item"><label>周末可用（分钟）</label><input type="number" id="gf-weekend" class="js-goal-min" min="0" step="10" value="' + (g.weekendMinutes != null ? g.weekendMinutes : 90) + '"></div>' +
@@ -573,24 +567,21 @@
       '<p class="form-hint" id="gf-budget-hint"></p>' +
       '<div class="form-item"><div class="label-row"><label>当前基础 (选填)</label>' +
       '<button class="chip xs" data-action="gf-example" data-target="gf-base">💡 示例</button></div>' +
-      '<textarea id="gf-base" placeholder="例：会 Python 基础，没系统学过建模">' + esc(g.base || '') + '</textarea></div>' +
+      '<textarea id="gf-base" maxlength="120" placeholder="例：会 Python 基础，没系统学过建模">' + esc(g.base || '') + '</textarea></div>' +
       '<div class="form-item"><div class="label-row"><label>个人偏好 (选填)</label>' +
       '<button class="chip xs" data-action="gf-example" data-target="gf-pref">💡 示例</button></div>' +
-      '<textarea id="gf-pref" placeholder="例：喜欢视频课+动手练习，晚上效率高">' + esc(g.preferences || '') + '</textarea></div>' +
+      '<textarea id="gf-pref" maxlength="120" placeholder="例：喜欢视频课+动手练习，晚上效率高">' + esc(g.preferences || '') + '</textarea></div>' +
       '<div class="form-item"><label>优先级</label><div class="radio-row" data-pick-group="prio">' + prChips + '</div></div>' +
       '<div class="form-item check-row"><input type="checkbox" id="gf-core"' + (g.isCore ? ' checked' : '') + '>' +
       '<label for="gf-core" style="margin:0">设为核心目标 ★（最多 2 个，资源冲突时优先保障）</label></div>' +
-      '<div class="btn-row">' +
-      (goal ? '' : '<button class="btn ghost" data-action="goal-step-back">← 上一步</button>') +
-      '<button class="btn primary" data-action="save-goal">' + (goal ? '保存修改' : '创建目标') + '</button></div>';
-    openModal('<h2>' + (goal ? '编辑目标' : '新建目标') + '</h2>' +
-      (step === 1 ? step1 : step2));
-    if (step === 2) goalBudgetHint();
+      '<div class="btn-row"><button class="btn ghost" data-action="close-modal">取消</button>' +
+      '<button class="btn primary" data-action="save-goal">保存修改</button></div>');
+    goalBudgetHint();
   }
 
   /** 💡示例：按当前所选目标类型填入示例文案 */
   function fillGoalExample(target) {
-    var type = ($('#gf-type') && $('#gf-type').value) || (state.goalDraft && state.goalDraft.type) || 'other';
+    var type = ($('#gf-type') && $('#gf-type').value) || 'other';
     var ex = GOAL_EXAMPLES[type] || GOAL_EXAMPLES.other;
     var input = $('#' + target);
     if (!input) return;
@@ -598,30 +589,23 @@
     toast('已填入示例，可自由修改');
   }
 
-  /** 在步骤切换前把当前表单值收进草稿，避免丢失 */
-  function stashGoalDraft() {
-    var d = state.goalDraft || (state.goalDraft = {});
-    if ($('#gf-title')) d.title = $('#gf-title').value.trim();
-    if ($('#gf-type')) d.type = $('#gf-type').value;
-    if ($('#gf-deadline')) d.deadline = $('#gf-deadline').value;
-    return d;
-  }
-
   function saveGoalFromModal() {
-    var draft = stashGoalDraft();
-    var title = draft.title;
-    var deadline = draft.deadline;
+    if (!state.editingGoalId) { closeModal(); return; }
+    var title = ($('#gf-title') ? $('#gf-title').value.trim() : '');
+    var type = $('#gf-type') ? $('#gf-type').value : '';
+    var deadline = $('#gf-deadline') ? $('#gf-deadline').value : '';
     if (!title) { toast('请填写目标描述', true); return; }
-    if (!draft.type) { toast('请选择目标类型', true); return; }
+    if (!type) { toast('请选择目标类型', true); return; }
     if (!deadline) { toast('请选择截止时间', true); return; }
+    if (deadline < Store.todayStr()) { toast('截止时间不能早于今天', true); return; }
     var isCore = $('#gf-core').checked;
     var coreCount = Store.activeGoals().filter(function (g) { return g.isCore && g.id !== state.editingGoalId; }).length;
     if (isCore && coreCount >= 2) { toast('核心目标最多 2 个，请先取消其他核心标记', true); return; }
     var prioEl = $('#modal-box [data-pick-group="prio"]');
-    var fields = {
+    Store.updateGoal(state.editingGoalId, {
       title: title,
       description: title,
-      type: draft.type,
+      type: type,
       deadline: deadline,
       weekdayMinutes: Store.clamp(+$('#gf-weekday').value || 0, 0, 720),
       weekendMinutes: Store.clamp(+$('#gf-weekend').value || 0, 0, 720),
@@ -629,18 +613,371 @@
       preferences: $('#gf-pref').value.trim(),
       priority: (prioEl && prioEl.dataset.val) || 'mid',
       isCore: isCore
-    };
-    if (state.editingGoalId) {
-      Store.updateGoal(state.editingGoalId, fields);
-      toast('目标已更新');
-    } else {
-      var g = Store.addGoal(Store.newGoal(fields));
-      state.editingGoalId = g.id;
-      toast('目标已创建，可在详情页生成 AI 大纲');
-    }
-    state.goalDraft = null;
+    });
+    state.editingGoalId = null;
     closeModal();
+    toast('目标已更新');
     render();
+  }
+
+  /* ==========================================================
+   * 计划导入：粘贴外部 AI 计划 → 解析 → 预览微调 → 导入
+   * 新定位：用户自带计划，GoalFlow 负责可视化与动态调整
+   * ========================================================== */
+
+  /** 给外部 AI 的提示词模板（用户复制后粘贴到 ChatGPT / Claude） */
+  var IMPORT_PROMPT_TEMPLATE = [
+    '请把我的目标拆解成一份可执行计划，用 Markdown 输出，格式示例：',
+    '',
+    '# 两个月准备数学建模竞赛',
+    '截止日期：2026-11-30',
+    '',
+    '## 第 1 周 · 基础入门',
+    '- 9月15日 完成环境搭建与第一章练习（45分钟）',
+    '- 9月17日 做完 10 道基础题（30分钟）',
+    '',
+    '## 第 2 周 · 专项突破',
+    '- 9月22日 学习线性规划并完成例题（60分钟）',
+    '',
+    '要求：',
+    '1. 第一行用 # 写目标名称，第二行写截止日期；',
+    '2. 用 ## 写阶段/周次，阶段里写该阶段的关键节点目标；',
+    '3. 任务用「- 」开头，日期写在任务前面（支持 9月15日 / 2026-09-15 / Day 3 / 周一）；',
+    '4. 每条任务标注预计时长与精力要求；',
+    '5. 计划覆盖到截止日期，前 7 天要具体到每天。'
+  ].join('\n');
+
+  function openImportModal(prefill) {
+    var p = prefill || {};
+    var today = Store.todayStr();
+    var typeOpts = Store.GOAL_TYPES.map(function (t) {
+      return '<option value="' + t.id + '"' + (p.type === t.id ? ' selected' : '') + '>' + t.name + '</option>';
+    }).join('');
+    openModal('<h2>新建目标 · 导入计划</h2>' +
+      '<p class="card-sub">把你从 ChatGPT / Claude 等生成的计划粘贴进来，GoalFlow 会解析成「阶段大纲 + 未来 7 天任务」，确认后再导入</p>' +
+      (AI.useMock() ? '<div class="notice info" style="margin-bottom:10px"><span>当前无 API Key，将使用基础规则解析；在「设置 → API 配置」填入 Key 后可用 AI 精准解析</span></div>' : '') +
+      '<div class="form-item"><label>计划内容</label>' +
+      '<textarea id="ip-text" maxlength="' + Importer.MAX_TEXT + '" placeholder="把外部 AI 生成的计划粘贴到这里；也可以留空，只填下面的目标名称先建一个空目标">' + esc(p.text || '') + '</textarea>' +
+      '<p class="form-hint">支持 Markdown 标题与列表；日期可写 2026-09-15 / 9月15日 / Day 1 / 周一等。只有未来 7 天的内容会成为任务，更远的内容归入阶段大纲</p></div>' +
+      '<div class="form-item"><label>目标名称（选填，留空则用计划中的标题）</label>' +
+      '<input id="ip-title" maxlength="60" value="' + esc(p.title || '') + '" placeholder="例：两个月准备数学建模竞赛"></div>' +
+      '<div class="form-2col">' +
+      '<div class="form-item"><label>目标类型</label><select id="ip-type">' + typeOpts + '</select></div>' +
+      '<div class="form-item"><label>截止时间（选填）</label><input type="date" id="ip-deadline" min="' + today + '" value="' + esc(p.deadline || '') + '"></div>' +
+      '</div>' +
+      '<p class="form-hint">截止时间留空则采用计划里的日期，都没有时默认 60 天后</p>' +
+      '<div class="btn-row"><button class="btn ghost" data-action="close-modal">取消</button>' +
+      '<button class="btn primary" data-action="import-parse">解析并预览</button></div>' +
+      '<div style="margin-top:10px;text-align:center">' +
+      '<button class="chip xs" data-action="copy-prompt">📋 复制「给 AI 的计划模板」</button></div>');
+  }
+
+  function copyPromptTemplate() {
+    var text = IMPORT_PROMPT_TEMPLATE;
+    var done = function () { toast('模板已复制，粘贴给 ChatGPT / Claude 即可'); };
+    var fail = function () { toast('复制失败，请手动输入', true); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done).catch(function () {
+        legacyCopy(text) ? done() : fail();
+      });
+      return;
+    }
+    legacyCopy(text) ? done() : fail();
+  }
+  function legacyCopy(text) {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    var ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    ta.remove();
+    return ok;
+  }
+
+  /** 目标数软上限：达到阈值时先确认（新建空目标 / 导入计划共用） */
+  function confirmGoalLimit(next, verb) {
+    verb = verb || '创建';
+    var limit = Store.loadSettings().goalLimit || 5;
+    var active = Store.activeGoals().length;
+    if (active < limit) { next(); return true; }
+    confirmBox('目标有点多',
+      '当前进行中的目标已有 ' + active + ' 个（建议不超过 ' + limit + ' 个），仍然' + verb + '吗？',
+      '仍然' + verb, next);
+    return false;
+  }
+
+  /** 只填目标名称（不粘贴计划）时创建空目标 */
+  function createEmptyGoal(title, type, deadline) {
+    var today = Store.todayStr();
+    var g = Store.addGoal(Store.newGoal({
+      title: title, description: title,
+      type: type || 'other',
+      deadline: deadline || Store.addDays(today, 60)
+    }));
+    state.importText = '';
+    state.importHint = null;
+    closeModal();
+    toast('目标已创建，可在详情页导入计划或让 AI 生成任务');
+    switchPage('goals');
+    openDetail(g.id);
+  }
+
+  /** 解析并预览：空文本走「空目标」路径，保证想手动建小目标的用户不流失 */
+  function importParse() {
+    var text = ($('#ip-text') ? $('#ip-text').value : '') || '';
+    var title = ($('#ip-title') ? $('#ip-title').value.trim() : '');
+    var type = $('#ip-type') ? $('#ip-type').value : '';
+    var deadline = $('#ip-deadline') ? $('#ip-deadline').value : '';
+    var today = Store.todayStr();
+    if (deadline && deadline < today) { toast('截止时间不能早于今天', true); return; }
+    if (text.length > Importer.MAX_TEXT) text = text.slice(0, Importer.MAX_TEXT);
+    state.importText = text;
+    state.importHint = { title: title, type: type, deadline: deadline };
+
+    if (!text.trim()) {
+      if (!title) { toast('请粘贴计划内容，或填写目标名称先建一个空目标', true); return; }
+      confirmGoalLimit(function () { createEmptyGoal(title, type, deadline); }, '创建');
+      return;
+    }
+    if (AI.useMock()) toast('当前为 Mock 演示模式，使用基础规则解析');
+    showLoading('正在解析你的计划…');
+    AI.genImportParse(text, state.importHint).then(function (res) {
+      state.lastImport = res;
+      closeModal();
+      showImportPreview();
+    }).catch(function (e) {
+      closeModal();
+      toast(AI.humanizeError(e), true);
+    });
+  }
+
+  function showImportPreview() {
+    var el = $('#import-preview');
+    el.classList.remove('hidden');
+    el.classList.add('show');
+    renderImportPreview();
+  }
+  function closeImportPreview() {
+    var el = $('#import-preview');
+    el.classList.add('hidden');
+    el.classList.remove('show');
+    state.lastImport = null;
+    render();
+  }
+
+  /** 导入摘要（勾选数 / 每日负荷 / 超载提示），重算时只刷新这一块 */
+  function importSummaryHtml(r) {
+    var s = Store.loadSettings();
+    var checked = $$('#ip-body .js-ip-check');
+    var picked = [];
+    r.tasks.forEach(function (t, i) {
+      var box = checked.filter(function (c) { return +c.dataset.idx === i; })[0];
+      if (!box || box.checked) picked.push(t);
+    });
+    var load = Importer.dailyLoad(picked);
+    var today = Store.todayStr();
+    var todayBudget = Store.isWeekend(today) ? s.dailyBudget.weekend : s.dailyBudget.weekday;
+    var todayLoad = load[today] || 0;
+    var totalMin = 0;
+    picked.forEach(function (t) { totalMin += t.estimateMin; });
+    var over = [];
+    Object.keys(load).forEach(function (d) {
+      var b = Store.isWeekend(d) ? s.dailyBudget.weekend : s.dailyBudget.weekday;
+      if (load[d] > b) over.push(d.slice(5) + ' 超 ' + (load[d] - b) + ' 分钟');
+    });
+    var pct = todayBudget ? Math.min(100, Math.round(todayLoad / todayBudget * 100)) : 0;
+    return '<div class="card"><h3>导入摘要</h3>' +
+      '<div class="sum-bar" style="padding:4px 0">' +
+      '<div><b>' + r.milestones.length + '</b><span>阶段</span></div>' +
+      '<div><b>' + picked.length + '</b><span>任务</span></div>' +
+      '<div><b>' + totalMin + '</b><span>预计分钟</span></div></div>' +
+      '<div class="bar-row" style="margin-top:6px"><span style="min-width:64px">今日负荷</span>' +
+      '<div class="bar ' + (todayLoad > todayBudget ? 'danger' : (pct >= 85 ? 'warn' : 'ok')) + '"><i style="width:' + pct + '%"></i></div>' +
+      '<span class="val">' + todayLoad + '/' + todayBudget + '</span></div>' +
+      (over.length ? '<p class="form-hint warn">⚠️ 部分日期超出预算：' + esc(over.join('、')) + '，导入后可用 AI 优化</p>' : '') +
+      '</div>';
+  }
+
+  function renderImportFooter() {
+    var r = state.lastImport;
+    if (!r) return;
+    var box = $('#ip-summary');
+    if (box) box.innerHTML = importSummaryHtml(r);
+    var btn = $('#ip-apply-btn');
+    if (btn) {
+      var n = $$('#ip-body .js-ip-check').filter(function (c) { return c.checked; }).length;
+      btn.textContent = '导入 ' + r.milestones.length + ' 个阶段 · ' + n + ' 个任务';
+    }
+  }
+
+  function renderImportPreview() {
+    var r = state.lastImport;
+    if (!r) return;
+    var today = Store.todayStr();
+    var dates = Importer.windowDates();
+    var dateOpts = function (sel) {
+      return dates.map(function (d) {
+        return '<option value="' + d.date + '"' + (d.date === sel ? ' selected' : '') + '>' + d.label + '</option>';
+      }).join('');
+    };
+    var minList = [15, 30, 45, 60, 90, 120];
+    var minOpts = function (sel) {
+      var list = minList.slice();
+      if (list.indexOf(+sel) < 0) list.push(+sel);
+      list.sort(function (a, b) { return a - b; });
+      return list.map(function (m) {
+        return '<option value="' + m + '"' + (+sel === m ? ' selected' : '') + '>' + m + ' 分钟</option>';
+      }).join('');
+    };
+    var enOpts = function (sel) {
+      return Store.ENERGIES.map(function (e) {
+        return '<option value="' + e.id + '"' + (e.id === sel ? ' selected' : '') + '>' + e.name + '</option>';
+      }).join('');
+    };
+    var typeOpts = Store.GOAL_TYPES.map(function (t) {
+      return '<option value="' + t.id + '"' + (r.goal.type === t.id ? ' selected' : '') + '>' + t.name + '</option>';
+    }).join('');
+
+    // 目标信息（可改）
+    var html = '<div class="card"><h3>目标信息</h3>' +
+      '<div class="form-item"><label>目标名称</label>' +
+      '<input id="ipg-title" maxlength="60" value="' + esc(r.goal.title) + '"></div>' +
+      '<div class="form-2col">' +
+      '<div class="form-item"><label>类型</label><select id="ipg-type">' + typeOpts + '</select></div>' +
+      '<div class="form-item"><label>截止时间</label><input type="date" id="ipg-deadline" min="' + today + '" value="' + esc(r.goal.deadline) + '"></div>' +
+      '</div></div>';
+
+    html += '<div id="ip-summary">' + importSummaryHtml(r) + '</div>';
+
+    // 阶段大纲（全量导入，可删除）
+    html += '<div class="card"><h3>阶段大纲 <span class="tag">' + r.milestones.length + ' 个阶段</span></h3>';
+    if (r.milestones.length) {
+      html += r.milestones.map(function (m, i) {
+        return '<div class="log-item"><div class="log-head"><span>' + (i + 1) + '. ' + esc(m.title) + '</span>' +
+          '<button class="icon-btn" style="color:var(--danger)" data-action="ip-del-ms" data-idx="' + i + '">删除</button></div>' +
+          (m.detail ? '<p class="log-summary">🎯 ' + esc(m.detail) + '</p>' : '') +
+          '<span class="ms-date">' + String(m.startDate).slice(5) + ' – ' + String(m.targetDate).slice(5) + '</span></div>';
+      }).join('');
+    } else {
+      html += '<p class="card-sub">未解析出阶段大纲，可返回补充 Markdown 标题（如「## 第 1 周」）</p>';
+    }
+    html += '</div>';
+
+    // 未来 7 天任务（勾选 + 行内微调）
+    html += '<div class="card"><h3>未来 7 天任务 <span class="tag">' + r.tasks.length + ' 条</span></h3>' +
+      '<p class="card-sub" style="margin-bottom:8px">取消勾选可跳过；日期/时长/精力可直接在下拉里微调（超出 7 天的内容已归入阶段大纲）</p>';
+    if (r.tasks.length) {
+      html += r.tasks.map(function (t, i) {
+        return '<div class="ip-task" style="margin-bottom:8px">' +
+          '<input type="checkbox" class="js-ip-check" data-idx="' + i + '" checked>' +
+          '<div class="ip-main">' +
+          '<p class="ip-title">' + esc(t.title) + '</p>' +
+          (t.desc ? '<p class="ip-desc">' + esc(t.desc) + '</p>' : '') +
+          '<div class="ip-fields">' +
+          '<select class="js-ip-field" data-idx="' + i + '" data-field="date">' + dateOpts(t.date) + '</select>' +
+          '<select class="js-ip-field" data-idx="' + i + '" data-field="estimateMin">' + minOpts(t.estimateMin) + '</select>' +
+          '<select class="js-ip-field" data-idx="' + i + '" data-field="energy">' + enOpts(t.energy) + '</select>' +
+          '</div></div></div>';
+      }).join('');
+    } else {
+      html += '<p class="card-sub">没有未来 7 天内的任务（更远的内容已归入阶段大纲，可在目标详情页用 AI 逐周展开）</p>';
+    }
+    html += '</div>';
+
+    // 解析提示（未能识别 / 已调整的内容）
+    if (r.warnings.length) {
+      html += '<details class="ip-warn"><summary>⚠️ ' + r.warnings.length + ' 条解析提示（未能识别或已自动调整的内容）</summary><ul>' +
+        r.warnings.map(function (w) {
+          return '<li>' + esc(w.reason) + (w.text ? '：' + esc(w.text) : '') + '</li>';
+        }).join('') + '</ul></details>';
+    }
+    if (!r.tasks.length && !r.milestones.length) {
+      html += '<div class="notice warn">没有解析出阶段或任务，可点「重新解析」修改文本，或直接导入为空目标后在详情页用 AI 生成</div>';
+    }
+    html += '<div style="height:80px"></div>';
+
+    $('#ip-body').innerHTML = html;
+    $('#ip-footer').innerHTML =
+      '<div class="btn-row">' +
+      '<button class="btn ghost" data-action="ip-reparse">重新解析</button>' +
+      '<button class="btn ghost" data-action="close-import-preview">取消</button>' +
+      '<button class="btn primary" id="ip-apply-btn" data-action="ip-apply">导入</button></div>';
+    renderImportFooter();
+  }
+
+  /** 行内微调任务字段 */
+  function updateImportTaskField(el) {
+    var r = state.lastImport;
+    if (!r) return;
+    var t = r.tasks[+el.dataset.idx];
+    if (!t) return;
+    var f = el.dataset.field;
+    if (f === 'date') t.date = el.value;
+    else if (f === 'energy') t.energy = el.value;
+    else if (f === 'estimateMin') t.estimateMin = Store.clamp(+el.value || 30, 10, 300);
+    renderImportFooter();
+  }
+
+  function updateImportChecked(el) {
+    var row = el.closest ? el.closest('.ip-task') : null;
+    if (row) row.classList.toggle('off', !el.checked);
+    renderImportFooter();
+  }
+
+  function applyImport() {
+    var r = state.lastImport;
+    if (!r) return;
+    var checked = $$('#ip-body .js-ip-check').filter(function (c) { return c.checked; })
+      .map(function (c) { return +c.dataset.idx; });
+    var tasks = r.tasks.filter(function (t, i) { return checked.indexOf(i) >= 0; });
+    var title = ($('#ipg-title') ? $('#ipg-title').value.trim() : '') || r.goal.title;
+    if (!title) { toast('请填写目标名称', true); return; }
+    var deadline = $('#ipg-deadline') ? $('#ipg-deadline').value : '';
+    if (!deadline) { toast('请选择截止时间', true); return; }
+    if (deadline < Store.todayStr()) { toast('截止时间不能早于今天', true); return; }
+    if (!tasks.length && !r.milestones.length) { toast('没有可导入的内容，请点「重新解析」修改计划文本', true); return; }
+    var fields = {
+      title: title,
+      type: ($('#ipg-type') ? $('#ipg-type').value : '') || r.goal.type,
+      deadline: deadline
+    };
+    confirmGoalLimit(function () { doApplyImport(r, tasks, fields); }, '导入');
+  }
+
+  function doApplyImport(r, tasks, fields) {
+    closeModal(); // 可能在确认弹窗之后触发
+    var milestones = r.milestones.map(function (m) {
+      return {
+        id: Store.uid('ms'), title: m.title, detail: m.detail,
+        startDate: m.startDate, targetDate: m.targetDate, done: false
+      };
+    });
+    var g = Store.addGoal(Store.newGoal({
+      title: fields.title,
+      description: fields.title,
+      type: fields.type,
+      deadline: fields.deadline,
+      milestones: milestones,
+      outlineConfirmed: milestones.length > 0
+    }));
+    var batchId = Store.uid('batch');
+    Store.addTasks(tasks.map(function (t) {
+      return Store.newTask({
+        goalId: g.id, date: t.date, title: t.title, desc: t.desc,
+        energy: t.energy, estimateMin: t.estimateMin,
+        source: 'import', batchId: batchId, order: 55
+      });
+    }));
+    state.lastImport = null;
+    state.importText = '';
+    state.importHint = null;
+    closeImportPreview();
+    switchPage('goals');
+    openDetail(g.id);
+    toast('已导入 ' + milestones.length + ' 个阶段 · ' + tasks.length + ' 个任务');
   }
 
   /* ==========================================================
@@ -742,7 +1079,7 @@
     tasks.forEach(function (t) { (byDate[t.date] = byDate[t.date] || []).push(t); });
     var dates = Object.keys(byDate).sort().reverse().slice(0, 14);
     if (!dates.length) {
-      html += '<p class="card-sub">还没有任务。</p>';
+      html += '<p class="card-sub">还没有任务。可在新建目标时粘贴计划导入，或点右上角让 AI 生成。</p>';
     } else {
       dates.forEach(function (d) {
         html += '<div class="group-title">' + d + ' 周' + Store.weekdayCN(d) + (d === Store.todayStr() ? ' · 今天' : '') + '</div>';
@@ -1201,7 +1538,7 @@
         '<span class="tag">' + Store.TASK_STATUS[t.status].icon + Store.TASK_STATUS[t.status].name + '</span>' +
         '<span class="tag" style="color:' + Store.energyOf(t.energy).color + '">' + Store.energyOf(t.energy).name + '</span>' +
         '<span class="tag">⏱ ' + t.estimateMin + '分钟</span>' +
-        (t.source === 'rule' || t.locked ? '<span class="tag lock-tag">🔒 固定</span>' : '<span class="tag">' + (t.source === 'ai' ? 'AI' : '手动') + '</span>') + '</div>' +
+        (t.source === 'rule' || t.locked ? '<span class="tag lock-tag">🔒 固定</span>' : '<span class="tag">' + (t.source === 'ai' ? 'AI' : t.source === 'import' ? '导入' : '手动') + '</span>') + '</div>' +
         '<p class="task-title">' + esc(t.title) + '</p>' +
         (t.desc ? '<p class="task-desc">' + esc(t.desc) + '</p>' : '') + '</div>' +
         '<div class="row-ops">' +
@@ -1291,8 +1628,8 @@
       '<div class="form-item hidden" id="tf-weekly-box"><label>选择星期（可多选）</label><div class="radio-row">' + wdChips + '</div></div>' +
       '<div class="form-item hidden" id="tf-custom-box"><label>每隔几天重复一次</label><input type="number" id="tf-everyn" value="2" min="2" max="14"></div>' +
       '<p class="form-hint" id="tf-repeat-hint">单次任务：仅生成所选日期当天的一条</p>') +
-      '<div class="form-item"><label>任务标题 *</label><input id="tf-title" value="' + esc(t.title || '') + '" placeholder="例：完成建模第一章习题"></div>' +
-      '<div class="form-item"><label>任务描述</label><textarea id="tf-desc" placeholder="怎么做/产出什么（选填）">' + esc(t.desc || '') + '</textarea></div>' +
+      '<div class="form-item"><label>任务标题 *</label><input id="tf-title" maxlength="60" value="' + esc(t.title || '') + '" placeholder="例：完成建模第一章习题"></div>' +
+      '<div class="form-item"><label>任务描述</label><textarea id="tf-desc" maxlength="200" placeholder="怎么做/产出什么（选填）">' + esc(t.desc || '') + '</textarea></div>' +
       '<div class="form-2col">' +
       '<div class="form-item"><label>精力</label><select id="tf-energy">' + enOpts + '</select></div>' +
       '<div class="form-item"><label>预计时长（分钟）</label><input type="number" id="tf-min" value="' + (t.estimateMin || 30) + '" min="5" step="5"></div>' +
@@ -1829,17 +2166,6 @@
     /* 目标 */
     'goal-filter': function (el) { state.goalFilter = el.dataset.id; renderGoals(); },
     'new-goal': function () { openGoalModal(null); },
-    'goal-step-next': function () {
-      var d = stashGoalDraft();
-      if (!d.title) { toast('请先填写目标描述', true); return; }
-      if (!d.type) { toast('请选择目标类型', true); return; }
-      if (!d.deadline) { toast('请先选择截止时间', true); return; }
-      renderGoalForm(2, state.editingGoalId ? Store.goalById(state.editingGoalId) : null);
-    },
-    'goal-step-back': function () {
-      stashGoalDraft();
-      renderGoalForm(1, null);
-    },
     'save-goal': saveGoalFromModal,
     'open-detail': function (el) { openDetail(el.dataset.id); },
     'close-detail': closeDetail,
@@ -1931,6 +2257,27 @@
       if (future) runAdjust('goal', gid, 'manual');
       else expandWeekFor(gid);
     },
+
+    /* 计划导入 */
+    'import-parse': importParse,
+    'copy-prompt': copyPromptTemplate,
+    'ip-reparse': function () {
+      var text = state.importText;
+      var hint = state.importHint || {};
+      var el = $('#import-preview');
+      el.classList.add('hidden');
+      el.classList.remove('show');
+      state.lastImport = null;
+      openImportModal({ text: text, title: hint.title, type: hint.type, deadline: hint.deadline });
+    },
+    'ip-del-ms': function (el) {
+      var r = state.lastImport;
+      if (!r) return;
+      r.milestones.splice(+el.dataset.idx, 1);
+      renderImportPreview();
+    },
+    'ip-apply': applyImport,
+    'close-import-preview': closeImportPreview,
 
     /* 计划 */
     'plan-prev': function () { state.planDate = Store.addDays(state.planDate, state.planView === 'week' ? -7 : -1); renderPlan(); },
@@ -2046,7 +2393,7 @@
     }
   });
 
-  /* select / input 变更：设置项 + 计划筛选 */
+  /* select / input 变更：设置项 + 计划筛选 + 导入预览微调 */
   document.addEventListener('change', function (e) {
     var t = e.target;
     if (t.dataset && t.dataset.setting) { saveSettingFromInput(t); return; }
@@ -2055,6 +2402,8 @@
       renderPlan();
       return;
     }
+    if (t.classList && t.classList.contains('js-ip-field')) { updateImportTaskField(t); return; }
+    if (t.classList && t.classList.contains('js-ip-check')) { updateImportChecked(t); return; }
     if (t.id === 'tf-repeat' || t.id === 'tf-goal' || t.id === 'tf-date' || t.id === 'tf-everyn') {
       syncRepeatUI();
     }

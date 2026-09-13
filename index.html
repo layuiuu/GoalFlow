@@ -84,6 +84,16 @@
     <div class="ap-footer" id="ap-footer"></div>
   </section>
 
+  <!-- 计划导入预览（全屏覆盖层）：解析结果微调后导入 -->
+  <section id="import-preview" class="overlay hidden">
+    <header class="detail-head">
+      <button class="icon-btn" data-action="close-import-preview">‹ 返回</button>
+      <span class="detail-head-title">📥 导入预览</span>
+    </header>
+    <div class="page-body" id="ip-body"></div>
+    <div class="ap-footer" id="ip-footer"></div>
+  </section>
+
   <!-- 弹窗与提示 -->
   <div id="modal-mask" class="modal-mask hidden"><div class="modal" id="modal-box"></div></div>
   <div id="toast" class="toast hidden"></div>
@@ -132,6 +142,7 @@
   <script src="./js/store.js"></script>
   <script src="./js/rules.js"></script>
   <script src="./js/aggregate.js"></script>
+  <script src="./js/importer.js"></script>
   <script src="./js/ai.js"></script>
   <script src="./js/adjust.js"></script>
   <script src="./js/chart.js"></script>

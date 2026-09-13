@@ -1,9 +1,11 @@
 /* ==========================================================
  * ai.js —— AI 层：OpenAI 兼容接入（内置 DeepSeek 预设）+ Mock 引擎
- * 三个场景（真实调用与 Mock 输出同一 JSON Schema）：
+ * 场景（真实调用与 Mock 输出同一 JSON Schema）：
  *   outline —— 目标 → 阶段大纲（里程碑）
  *   plan    —— 目标 → 未来 7 天每日任务（滚动窗口，省 Token）
  *   adjust  —— 分目标 / 全局动态调整建议（只建议，应用需用户预览确认）
+ *   import  —— 用户粘贴的外部计划文本 → 结构化阶段与任务（失败降级本地规则）
+ *   feedback—— 复盘后的即时反馈
  * 每次调用记录 token 用量与估算成本到本地
  * ========================================================== */
 (function (global) {
@@ -12,6 +14,7 @@
   var Store = global.Store;
   var Agg = global.Agg;
   var Rules = global.Rules;
+  var Importer = global.Importer;
 
   var SYSTEM_PROMPT = '你是严谨的中文日程规划助手。无论用户要求什么，你只能输出一个 JSON 对象：' +
     '不要使用 markdown 代码块，不要解释，不要输出 JSON 以外的任何文字。所有文本用简体中文。';
@@ -601,6 +604,61 @@
     });
   }
 
+  /* ---------------- 场景五：计划导入解析 import ---------------- */
+
+  /**
+   * 把用户粘贴的外部 AI 计划文本解析为结构化数据
+   * 策略：AI 优先（有 Key 时），失败或无 Key 时降级为本地规则解析
+   * @param {string} text 计划原文
+   * @param {object} hint { title, type, deadline } 用户在弹窗中的选择（优先于解析结果）
+   */
+  function genImportParse(text, hint) {
+    hint = hint || {};
+    var clipped = String(text || '').slice(0, Importer.AI_TEXT_LIMIT);
+    if (useMock()) {
+      var mockRes = Importer.ruleParse(clipped, hint);
+      mockRes.mock = true;
+      mockRes.source = 'rule';
+      return Promise.resolve(mockRes);
+    }
+    var s = Store.loadSettings();
+    var today = Store.todayStr();
+    var end = Store.addDays(today, 6);
+    var prompt = [
+      '请把下面这份用户从其他 AI 获得的计划文本，解析成结构化的目标与任务。',
+      '今天是 ' + today + '。',
+      hint.title ? '用户已指定目标名称：' + hint.title + '（请沿用，不要改）' : '',
+      hint.deadline ? '用户已指定截止日期：' + hint.deadline + '（请沿用，不要改）' : '',
+      '',
+      '解析要求：',
+      '1. 先判断整体目标：title 用计划里的总标题（20 字内），type 从 study|fitness|skill|reading|other 中选最贴切的一个，deadline 用计划中的截止日期或按计划跨度合理推断。',
+      '2. milestones 是所有阶段/周次/章节，title 4-12 字，detail 写该阶段的关键节点目标（40 字内），startDate/targetDate 为 YYYY-MM-DD 且首尾衔接、递增、不超过 deadline。',
+      '3. tasks 只输出 ' + today + ' 至 ' + end + ' 之间的可执行任务；超出这个范围的内容不要放进 tasks（它们已经体现在 milestones 里）。',
+      '4. 每条任务：date 必须在范围内；title 具体可执行（15 字内）；desc 怎么做/产出什么（30 字内）；energy 从 high|mid|low 选；estimateMin 为 10-240 的整数。',
+      '5. 保留原文信息，不要自行新增原文没有的任务；原文信息不足时宁可少输出。',
+      '',
+      '只输出 JSON，格式：',
+      '{"title":"目标名称","type":"study","deadline":"YYYY-MM-DD","milestones":[{"title":"阶段名","detail":"关键节点目标","startDate":"YYYY-MM-DD","targetDate":"YYYY-MM-DD"}],"tasks":[{"date":"YYYY-MM-DD","title":"任务标题","desc":"怎么做","energy":"mid","estimateMin":30}]}',
+      '',
+      '计划原文：',
+      clipped
+    ].filter(function (x) { return x !== ''; }).join('\n');
+
+    return askJSON(s, 'import', prompt, 4000).then(function (data) {
+      var raw = {
+        title: data.title, type: data.type, deadline: data.deadline,
+        milestones: data.milestones, tasks: data.tasks,
+        warnings: [], source: 'ai', mock: false
+      };
+      return Importer.normalize(raw, hint);
+    }).catch(function (e) {
+      // 双保险：AI 不可用时降级为本地规则解析，不阻塞用户
+      var fallback = Importer.ruleParse(clipped, hint);
+      fallback.warnings.unshift({ reason: 'AI 解析失败（' + humanizeError(e) + '），已改用基础规则解析，请核对下方结果', text: '' });
+      return fallback;
+    });
+  }
+
   /* ---------------- 连通性测试（设置页） ---------------- */
 
   function testCall() {
@@ -619,6 +677,7 @@
     genOutline: genOutline,
     genWeekPlan: genWeekPlan,
     genAdjust: genAdjust,
+    genImportParse: genImportParse,
     testCall: testCall
   };
 })(window);

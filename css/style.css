@@ -173,6 +173,9 @@ button { font-family: inherit; }
 .task-title { font-size: 15px; font-weight: 600; margin: 0 0 3px; }
 .task-card.done-state .task-title { text-decoration: line-through; color: var(--muted); }
 .task-desc { color: var(--muted); font-size: 12.5px; margin: 0 0 8px; }
+/* 长文本防溢出：导入的外部计划常含长段落，标题与描述统一截断 */
+.task-title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.task-desc { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .task-status { display: flex; gap: 8px; }
 .st-btn {
   flex: 1; border: 1.5px solid var(--line); background: #fff; border-radius: 9px;
@@ -311,6 +314,7 @@ button { font-family: inherit; }
 .log-item { border-top: 1px solid var(--line); padding: 9px 0; }
 .log-item:first-of-type { border-top: 0; }
 .log-head { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
+.log-head > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .log-head .scope { color: var(--muted); font-size: 11.5px; }
 .log-summary { color: var(--muted); font-size: 12px; margin: 2px 0 4px; }
 .log-state { font-size: 11px; padding: 1px 7px; border-radius: 6px; white-space: nowrap; }
@@ -370,12 +374,15 @@ button { font-family: inherit; }
 .preview-item .p-detail { font-size: 11.5px; color: var(--muted); margin-top: 1px; }
 .preview-item .p-reason { font-size: 11.5px; color: var(--brand); margin-top: 2px; }
 
-/* ---------- Toast ---------- */
+/* ---------- Toast ----------
+ * 顶部悬浮：原 bottom:110px 会盖住今日页悬浮统计胶囊与弹窗底部警示文案
+ */
 .toast {
-  position: fixed; bottom: 110px; left: 50%; transform: translateX(-50%);
+  position: fixed; top: calc(70px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%);
   background: rgba(31, 41, 55, .92); color: #fff; font-size: 13px;
   padding: 9px 18px; border-radius: 99px; z-index: 99; white-space: nowrap;
   max-width: 86vw; overflow: hidden; text-overflow: ellipsis;
+  box-shadow: var(--shadow-float);
 }
 .toast.err { background: rgba(185, 28, 28, .95); }
 
@@ -491,3 +498,35 @@ button { font-family: inherit; }
 }
 .ap-change .p-detail { margin: 4px 0 0; }
 .ap-change-type { font-size: 11px; padding: 1px 8px; border-radius: 6px; background: var(--brand-weak); color: var(--brand); font-weight: 600; }
+
+/* ---------- v2.1 粘贴导入计划 ---------- */
+/* 导入预览覆盖层：与 AI 调整预览同层级，底部按钮不被 tabbar 遮挡 */
+#import-preview { z-index: 80; }
+#import-preview .page-body { padding-bottom: 120px; }
+
+/* 粘贴区：给外部计划文本足够的可见高度 */
+#import-text { min-height: 150px; }
+
+/* 导入任务行：勾选 + 标题 + 行内三个下拉 */
+.ip-task {
+  background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow);
+  padding: 10px 12px; display: flex; gap: 9px; align-items: flex-start;
+}
+.ip-task input[type="checkbox"] { margin-top: 4px; width: auto; flex-shrink: 0; }
+.ip-task .ip-main { flex: 1; min-width: 0; }
+.ip-task .ip-title { font-size: 13.5px; font-weight: 600; margin: 0 0 3px; }
+.ip-task .ip-desc { font-size: 11.5px; color: var(--muted); margin: 0 0 6px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.ip-fields { display: flex; gap: 6px; flex-wrap: wrap; }
+.ip-fields select {
+  flex: 1 1 0; min-width: 0; border: 1.5px solid var(--line); border-radius: 9px;
+  padding: 5px 6px; font-size: 12px; font-family: inherit; color: var(--text); background: #fff;
+}
+/* 日期下拉内容较长（“今天 9-13”），窄屏下给它更多宽度 */
+.ip-fields select[data-field="date"] { flex: 1.7 1 0; }
+.ip-task.off { opacity: .5; }
+
+/* 未识别行折叠区 */
+.ip-warn { border-radius: 12px; background: #fdf3e0; color: #92600a; font-size: 12px; padding: 9px 12px; }
+.ip-warn summary { cursor: pointer; font-weight: 600; }
+.ip-warn ul { margin: 6px 0 0; padding-left: 18px; }
+.ip-warn li { margin-bottom: 3px; word-break: break-all; }
