@@ -768,27 +768,36 @@
     render();
   }
 
-  /** 导入摘要（勾选数 / 每日负荷 / 超载提示），重算时只刷新这一块 */
+  /** 当前勾选的任务（未渲染勾选框时视为全选） */
+  function pickedImportTasks(r) {
+    var boxes = $$('#ip-body .js-ip-check');
+    return r.tasks.filter(function (t, i) {
+      var box = boxes.filter(function (c) { return +c.dataset.idx === i; })[0];
+      return !box || box.checked;
+    });
+  }
+
+  /** 导入摘要（勾选数 / 总时长 / 今日负荷 / 超预算日期清单），重算时只刷新这一块 */
   function importSummaryHtml(r) {
     var s = Store.loadSettings();
-    var checked = $$('#ip-body .js-ip-check');
-    var picked = [];
-    r.tasks.forEach(function (t, i) {
-      var box = checked.filter(function (c) { return +c.dataset.idx === i; })[0];
-      if (!box || box.checked) picked.push(t);
-    });
+    var picked = pickedImportTasks(r);
+    var totalMin = 0;
+    picked.forEach(function (t) { totalMin += (+t.estimateMin || 0); });
     var load = Importer.dailyLoad(picked);
     var today = Store.todayStr();
     var todayBudget = Store.isWeekend(today) ? s.dailyBudget.weekend : s.dailyBudget.weekday;
     var todayLoad = load[today] || 0;
-    var totalMin = 0;
-    picked.forEach(function (t) { totalMin += t.estimateMin; });
-    var over = [];
-    Object.keys(load).forEach(function (d) {
-      var b = Store.isWeekend(d) ? s.dailyBudget.weekend : s.dailyBudget.weekday;
-      if (load[d] > b) over.push(d.slice(5) + ' 超 ' + (load[d] - b) + ' 分钟');
-    });
     var pct = todayBudget ? Math.min(100, Math.round(todayLoad / todayBudget * 100)) : 0;
+    var over = [];
+    Object.keys(load).sort().forEach(function (d) {
+      var b = Store.isWeekend(d) ? s.dailyBudget.weekend : s.dailyBudget.weekday;
+      if (load[d] > b) over.push(d.slice(5) + '（超 ' + (load[d] - b) + '）');
+    });
+    var overHtml = over.length
+      ? '<details class="ip-warn" style="margin-top:8px"><summary>⚠️ ' + over.length + ' 天超出每日预算</summary>' +
+        '<p style="margin:6px 0 0">' + esc(over.slice(0, 12).join('、')) + (over.length > 12 ? ' 等' : '') +
+        '<br>导入后可用「AI 优化」或手动调整日期/时长。</p></details>'
+      : '';
     return '<div class="card"><h3>导入摘要</h3>' +
       '<div class="sum-bar" style="padding:4px 0">' +
       '<div><b>' + r.milestones.length + '</b><span>阶段</span></div>' +
@@ -797,8 +806,7 @@
       '<div class="bar-row" style="margin-top:6px"><span style="min-width:64px">今日负荷</span>' +
       '<div class="bar ' + (todayLoad > todayBudget ? 'danger' : (pct >= 85 ? 'warn' : 'ok')) + '"><i style="width:' + pct + '%"></i></div>' +
       '<span class="val">' + todayLoad + '/' + todayBudget + '</span></div>' +
-      (over.length ? '<p class="form-hint warn">⚠️ 部分日期超出预算：' + esc(over.join('、')) + '，导入后可用 AI 优化</p>' : '') +
-      '</div>';
+      overHtml + '</div>';
   }
 
   function renderImportFooter() {
@@ -817,10 +825,12 @@
     var r = state.lastImport;
     if (!r) return;
     var today = Store.todayStr();
-    var dates = Importer.windowDates();
+    var groups = Importer.dateOptions(today, r.goal.deadline);
     var dateOpts = function (sel) {
-      return dates.map(function (d) {
-        return '<option value="' + d.date + '"' + (d.date === sel ? ' selected' : '') + '>' + d.label + '</option>';
+      return groups.map(function (g) {
+        return '<optgroup label="' + esc(g.group) + '">' + g.items.map(function (d) {
+          return '<option value="' + d.date + '"' + (d.date === sel ? ' selected' : '') + '>' + esc(d.label) + '</option>';
+        }).join('') + '</optgroup>';
       }).join('');
     };
     var minList = [15, 30, 45, 60, 90, 120];
@@ -852,40 +862,68 @@
 
     html += '<div id="ip-summary">' + importSummaryHtml(r) + '</div>';
 
-    // 阶段大纲（全量导入，可删除）
-    html += '<div class="card"><h3>阶段大纲 <span class="tag">' + r.milestones.length + ' 个阶段</span></h3>';
-    if (r.milestones.length) {
-      html += r.milestones.map(function (m, i) {
-        return '<div class="log-item"><div class="log-head"><span>' + (i + 1) + '. ' + esc(m.title) + '</span>' +
-          '<button class="icon-btn" style="color:var(--danger)" data-action="ip-del-ms" data-idx="' + i + '">删除</button></div>' +
-          (m.detail ? '<p class="log-summary">🎯 ' + esc(m.detail) + '</p>' : '') +
-          '<span class="ms-date">' + String(m.startDate).slice(5) + ' – ' + String(m.targetDate).slice(5) + '</span></div>';
-      }).join('');
-    } else {
-      html += '<p class="card-sub">未解析出阶段大纲，可返回补充 Markdown 标题（如「## 第 1 周」）</p>';
+    // 解析结果概览 + 诊断（来源 / AI 失败 / 截断 / 被丢弃明细）
+    var srcBadge = r.source === 'ai'
+      ? '<span class="tag" style="background:var(--brand-weak);color:var(--brand)">🤖 AI 解析</span>'
+      : '<span class="tag">🧩 基础规则解析</span>';
+    html += '<div class="card"><div class="card-head-row"><h3>解析结果</h3>' + srcBadge + '</div>' +
+      '<p class="form-hint" style="margin:0">原文 ' + ((r.stats && r.stats.lineCount) ? r.stats.lineCount : '—') + ' 行 → ' +
+      r.milestones.length + ' 阶段 / ' + r.tasks.length + ' 任务' +
+      ((r.dropped && r.dropped.length) ? ' / 跳过 ' + r.dropped.length + ' 条' : '') + '</p>';
+    if (r.aiFailed) {
+      html += '<div class="notice danger" style="margin-top:8px"><span>AI 解析失败：' + esc(r.aiError) + '；当前显示的是基础规则解析结果</span>' +
+        (AI.useMock() ? '' : '<button class="btn sm danger" data-action="ip-retry-ai">重试 AI</button>') + '</div>';
+    }
+    if (r.truncated) {
+      html += '<div class="notice warn" style="margin-top:8px"><span>原文过长，只解析了前 ' + Importer.AI_TEXT_LIMIT + ' 字符，建议分段导入</span></div>';
+    }
+    if (r.dropped && r.dropped.length) {
+      html += '<details class="ip-warn" style="margin-top:8px"><summary>🗑 有 ' + r.dropped.length + ' 条任务未导入（早于今天）</summary><ul>' +
+        r.dropped.map(function (d) { return '<li>' + esc(d.date) + ' · ' + esc(d.title) + '</li>'; }).join('') + '</ul></details>';
     }
     html += '</div>';
 
-    // 未来 7 天任务（勾选 + 行内微调）
-    html += '<div class="card"><h3>未来 7 天任务 <span class="tag">' + r.tasks.length + ' 条</span></h3>' +
-      '<p class="card-sub" style="margin-bottom:8px">取消勾选可跳过；日期/时长/精力可直接在下拉里微调（超出 7 天的内容已归入阶段大纲）</p>';
+    // 阶段大纲（可改名、改起止日期、增删）
+    html += '<div class="card"><h3>阶段大纲 <span class="tag">' + r.milestones.length + ' 个阶段</span></h3>';
+    if (r.milestones.length) {
+      html += r.milestones.map(function (m, i) {
+        return '<div class="log-item">' +
+          '<div class="ip-ms-row">' +
+          '<input class="js-ip-ms ip-ms-title" data-idx="' + i + '" data-field="title" maxlength="40" value="' + esc(m.title) + '" placeholder="阶段名称">' +
+          '<button class="icon-btn" style="color:var(--danger)" data-action="ip-del-ms" data-idx="' + i + '">删除</button></div>' +
+          (m.detail ? '<p class="log-summary">🎯 ' + esc(m.detail) + '</p>' : '') +
+          '<div class="ip-ms-dates">' +
+          '<input type="date" class="js-ip-ms" data-idx="' + i + '" data-field="startDate" value="' + esc(m.startDate) + '">' +
+          '<span class="ms-date">→</span>' +
+          '<input type="date" class="js-ip-ms" data-idx="' + i + '" data-field="targetDate" value="' + esc(m.targetDate) + '">' +
+          '</div></div>';
+      }).join('');
+    } else {
+      html += '<p class="card-sub">未解析出阶段大纲。可以手动新增，或返回在计划里加上 Markdown 标题（如「## 第 1 周」）重新解析。</p>';
+    }
+    html += '<button class="btn ghost sm" data-action="ip-add-ms" style="margin-top:8px">＋ 新增阶段</button></div>';
+
+    // 任务（勾选 + 标题/日期/时长/精力微调 + 增删）
+    html += '<div class="card"><h3>任务 <span class="tag">' + r.tasks.length + ' 条</span></h3>' +
+      '<p class="card-sub" style="margin-bottom:8px">标题、日期、时长、精力都能直接改；取消勾选可跳过这条。原文里早于今天的任务不会导入。</p>';
     if (r.tasks.length) {
       html += r.tasks.map(function (t, i) {
         return '<div class="ip-task" style="margin-bottom:8px">' +
           '<input type="checkbox" class="js-ip-check" data-idx="' + i + '" checked>' +
           '<div class="ip-main">' +
-          '<p class="ip-title">' + esc(t.title) + '</p>' +
+          '<input class="js-ip-task ip-title-input" data-idx="' + i + '" data-field="title" maxlength="60" value="' + esc(t.title) + '" placeholder="任务标题">' +
           (t.desc ? '<p class="ip-desc">' + esc(t.desc) + '</p>' : '') +
           '<div class="ip-fields">' +
           '<select class="js-ip-field" data-idx="' + i + '" data-field="date">' + dateOpts(t.date) + '</select>' +
           '<select class="js-ip-field" data-idx="' + i + '" data-field="estimateMin">' + minOpts(t.estimateMin) + '</select>' +
           '<select class="js-ip-field" data-idx="' + i + '" data-field="energy">' + enOpts(t.energy) + '</select>' +
+          '<button class="icon-btn" style="color:var(--danger)" data-action="ip-del-task" data-idx="' + i + '">删</button>' +
           '</div></div></div>';
       }).join('');
     } else {
-      html += '<p class="card-sub">没有未来 7 天内的任务（更远的内容已归入阶段大纲，可在目标详情页用 AI 逐周展开）</p>';
+      html += '<p class="card-sub">没有解析出任务，可点「重新解析」修改文本，或手动补一条。</p>';
     }
-    html += '</div>';
+    html += '<button class="btn ghost sm" data-action="ip-add-task" style="margin-top:8px">＋ 补一条任务</button></div>';
 
     // 解析提示（未能识别 / 已调整的内容）
     if (r.warnings.length) {
@@ -915,10 +953,23 @@
     var t = r.tasks[+el.dataset.idx];
     if (!t) return;
     var f = el.dataset.field;
+    if (f === 'title') { t.title = el.value.slice(0, 60); return; }   // 标题边输入边存，不刷新摘要
     if (f === 'date') t.date = el.value;
     else if (f === 'energy') t.energy = el.value;
     else if (f === 'estimateMin') t.estimateMin = Store.clamp(+el.value || 30, 10, 300);
     renderImportFooter();
+  }
+
+  /** 行内微调阶段字段 */
+  function updateImportMilestoneField(el) {
+    var r = state.lastImport;
+    if (!r) return;
+    var m = r.milestones[+el.dataset.idx];
+    if (!m) return;
+    var f = el.dataset.field;
+    if (f === 'title') m.title = el.value.slice(0, 40);
+    else if (f === 'startDate') m.startDate = el.value;
+    else if (f === 'targetDate') m.targetDate = el.value;
   }
 
   function updateImportChecked(el) {
@@ -927,12 +978,65 @@
     renderImportFooter();
   }
 
+  /** 手动补一条任务（默认排在今天） */
+  function addImportTask() {
+    var r = state.lastImport;
+    if (!r) return;
+    r.tasks.push({
+      date: Store.todayStr(), title: '', desc: '', energy: 'mid', estimateMin: 30, endDate: ''
+    });
+    renderImportPreview();
+    // 聚焦到最后一条的标题输入框
+    var inputs = $$('#ip-body .js-ip-task');
+    if (inputs.length) inputs[inputs.length - 1].focus();
+  }
+
+  /** 手动新增阶段（默认接在最后一个阶段之后，且不超过截止日） */
+  function addImportMilestone() {
+    var r = state.lastImport;
+    if (!r) return;
+    var today = Store.todayStr();
+    var dl = r.goal.deadline || Store.addDays(today, 30);
+    var last = r.milestones[r.milestones.length - 1];
+    var start = (last && last.targetDate) ? Store.addDays(last.targetDate, 1) : today;
+    if (start > dl) start = dl;
+    var target = Store.addDays(start, 6);
+    if (target > dl) target = dl;
+    if (target < start) target = start;
+    r.milestones.push({ title: '', detail: '', startDate: start, targetDate: target });
+    renderImportPreview();
+  }
+
+  /** AI 解析失败后重试（保留原文与用户填写的信息） */
+  function retryImportAI() {
+    if (!state.importText) { toast('原文已丢失，请点「重新解析」重新粘贴', true); return; }
+    showLoading('正在重新用 AI 解析…');
+    AI.genImportParse(state.importText, state.importHint || {}).then(function (res) {
+      state.lastImport = res;
+      closeModal();
+      renderImportPreview();
+      if (res.aiFailed) toast('AI 仍然失败：' + res.aiError, true);
+      else toast('AI 解析成功');
+    }).catch(function (e) {
+      closeModal();
+      toast(AI.humanizeError(e), true);
+    });
+  }
+
   function applyImport() {
     var r = state.lastImport;
     if (!r) return;
     var checked = $$('#ip-body .js-ip-check').filter(function (c) { return c.checked; })
       .map(function (c) { return +c.dataset.idx; });
     var tasks = r.tasks.filter(function (t, i) { return checked.indexOf(i) >= 0; });
+    var blank = tasks.filter(function (t) { return !String(t.title || '').trim(); }).length;
+    if (blank) { toast('有 ' + blank + ' 条任务没有标题，请填写或取消勾选', true); return; }
+    tasks = tasks.map(function (t) {
+      return {
+        date: t.date, title: String(t.title).trim().slice(0, 60), desc: t.desc || '',
+        energy: t.energy, estimateMin: t.estimateMin
+      };
+    });
     var title = ($('#ipg-title') ? $('#ipg-title').value.trim() : '') || r.goal.title;
     if (!title) { toast('请填写目标名称', true); return; }
     var deadline = $('#ipg-deadline') ? $('#ipg-deadline').value : '';
@@ -2261,6 +2365,15 @@
     /* 计划导入 */
     'import-parse': importParse,
     'copy-prompt': copyPromptTemplate,
+    'ip-retry-ai': retryImportAI,
+    'ip-add-task': addImportTask,
+    'ip-add-ms': addImportMilestone,
+    'ip-del-task': function (el) {
+      var r = state.lastImport;
+      if (!r) return;
+      r.tasks.splice(+el.dataset.idx, 1);
+      renderImportPreview();
+    },
     'ip-reparse': function () {
       var text = state.importText;
       var hint = state.importHint || {};
@@ -2403,15 +2516,20 @@
       return;
     }
     if (t.classList && t.classList.contains('js-ip-field')) { updateImportTaskField(t); return; }
+    if (t.classList && t.classList.contains('js-ip-ms') && t.type === 'date') { updateImportMilestoneField(t); return; }
     if (t.classList && t.classList.contains('js-ip-check')) { updateImportChecked(t); return; }
     if (t.id === 'tf-repeat' || t.id === 'tf-goal' || t.id === 'tf-date' || t.id === 'tf-everyn') {
       syncRepeatUI();
     }
   });
 
-  /* 目标表单内：分钟输入实时计算预算提示 */
+  /* 目标表单内：分钟输入实时计算预算提示；导入预览内：标题边输入边同步到状态 */
   document.addEventListener('input', function (e) {
-    if (e.target.classList && e.target.classList.contains('js-goal-min')) goalBudgetHint();
+    var t = e.target;
+    if (!t.classList) return;
+    if (t.classList.contains('js-goal-min')) { goalBudgetHint(); return; }
+    if (t.classList.contains('js-ip-task')) { updateImportTaskField(t); return; }
+    if (t.classList.contains('js-ip-ms')) { updateImportMilestoneField(t); return; }
   });
 
   /* 导入文件 */

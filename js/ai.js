@@ -88,13 +88,13 @@
     });
   }
 
-  /** 发送一次 chat 请求并返回 {content}；自动记录用量 */
-  function chat(s, scene, messages, maxTokens) {
+  /** 发送一次 chat 请求并返回 {content}；自动记录用量；opts.temperature 可覆盖默认温度 */
+  function chat(s, scene, messages, maxTokens, opts) {
     var model = s.api.model || 'deepseek-chat';
     var body = {
       model: model,
       messages: messages,
-      temperature: 0.6,
+      temperature: (opts && typeof opts.temperature === 'number') ? opts.temperature : 0.6,
       max_tokens: maxTokens || 2000,
       stream: false
     };
@@ -127,16 +127,16 @@
   }
 
   /** JSON 请求 + 解析失败自动重试一次 */
-  function askJSON(s, scene, userPrompt, maxTokens) {
+  function askJSON(s, scene, userPrompt, maxTokens, opts) {
     var messages = [{ role: 'system', content: SYSTEM_PROMPT }, { role: 'user', content: userPrompt }];
-    return chat(s, scene, messages, maxTokens).then(function (res) {
+    return chat(s, scene, messages, maxTokens, opts).then(function (res) {
       try { return extractJSON(res.content); }
       catch (e) {
         var retry = messages.concat([
           { role: 'assistant', content: res.content },
           { role: 'user', content: '你的输出不是合法 JSON。请重新回答，只输出一个 JSON 对象，不要任何其他文字。' }
         ]);
-        return chat(s, scene, retry, maxTokens).then(function (res2) { return extractJSON(res2.content); });
+        return chat(s, scene, retry, maxTokens, opts).then(function (res2) { return extractJSON(res2.content); });
       }
     });
   }
@@ -609,33 +609,39 @@
   /**
    * 把用户粘贴的外部 AI 计划文本解析为结构化数据
    * 策略：AI 优先（有 Key 时），失败或无 Key 时降级为本地规则解析
+   * 失败会带回 aiFailed/aiError，由 UI 明确展示（不再静默降级）
    * @param {string} text 计划原文
    * @param {object} hint { title, type, deadline } 用户在弹窗中的选择（优先于解析结果）
    */
   function genImportParse(text, hint) {
     hint = hint || {};
-    var clipped = String(text || '').slice(0, Importer.AI_TEXT_LIMIT);
+    var full = String(text || '');
+    var clipped = full.slice(0, Importer.AI_TEXT_LIMIT);
+    var truncated = full.length > clipped.length;
+    var limitNote = { reason: '原文超过 ' + Importer.AI_TEXT_LIMIT + ' 字符，仅解析了前 ' + Importer.AI_TEXT_LIMIT + ' 字符，建议分段导入', text: '' };
+
     if (useMock()) {
       var mockRes = Importer.ruleParse(clipped, hint);
       mockRes.mock = true;
       mockRes.source = 'rule';
+      if (truncated) { mockRes.truncated = true; mockRes.warnings.unshift(limitNote); }
       return Promise.resolve(mockRes);
     }
     var s = Store.loadSettings();
     var today = Store.todayStr();
-    var end = Store.addDays(today, 6);
+    var horizon = Importer.horizonEnd(hint.deadline || '');
     var prompt = [
-      '请把下面这份用户从其他 AI 获得的计划文本，解析成结构化的目标与任务。',
+      '请把下面这份用户从其他 AI 获得的计划文本，完整解析成结构化的目标与任务。',
       '今天是 ' + today + '。',
       hint.title ? '用户已指定目标名称：' + hint.title + '（请沿用，不要改）' : '',
       hint.deadline ? '用户已指定截止日期：' + hint.deadline + '（请沿用，不要改）' : '',
       '',
       '解析要求：',
-      '1. 先判断整体目标：title 用计划里的总标题（20 字内），type 从 study|fitness|skill|reading|other 中选最贴切的一个，deadline 用计划中的截止日期或按计划跨度合理推断。',
-      '2. milestones 是所有阶段/周次/章节，title 4-12 字，detail 写该阶段的关键节点目标（40 字内），startDate/targetDate 为 YYYY-MM-DD 且首尾衔接、递增、不超过 deadline。',
-      '3. tasks 只输出 ' + today + ' 至 ' + end + ' 之间的可执行任务；超出这个范围的内容不要放进 tasks（它们已经体现在 milestones 里）。',
-      '4. 每条任务：date 必须在范围内；title 具体可执行（15 字内）；desc 怎么做/产出什么（30 字内）；energy 从 high|mid|low 选；estimateMin 为 10-240 的整数。',
-      '5. 保留原文信息，不要自行新增原文没有的任务；原文信息不足时宁可少输出。',
+      '1. title 用计划的总标题（20 字内）；type 从 study|fitness|skill|reading|other 中选最贴切的一个；deadline 用计划中的截止日期，没有就按计划跨度推断，格式 YYYY-MM-DD。',
+      '2. milestones：原文里的每个阶段 / 周次 / 章节都要保留，title 用原文的名称与编号（如「第 1 周 · 基础入门」），detail 写该阶段的关键节点目标（40 字内），startDate/targetDate 格式 YYYY-MM-DD、首尾衔接递增、不超过 deadline。',
+      '3. tasks：把原文里每一条可执行事项都输出成任务，一条都不要合并、不要省略；date 一律 YYYY-MM-DD，且必须在 ' + today + ' 至 ' + horizon + ' 之间；原文写「Day 1 / D1 / 第 1 天 / 第一天」的，一律按 Day 1 = ' + today + ' 换算。',
+      '4. 每条任务：title 具体可执行（20 字内，保留原文关键信息，不要带序号与时长）；desc 写怎么做/产出什么（40 字内，没有就留空）；energy 从 high|mid|low 选；estimateMin 为 10-240 的整数，原文没写时长就按内容估一个。',
+      '5. 原文里早于今天的任务不要输出；原文没写日期的事项，按它在计划中的先后顺序顺延安排，不要丢掉。',
       '',
       '只输出 JSON，格式：',
       '{"title":"目标名称","type":"study","deadline":"YYYY-MM-DD","milestones":[{"title":"阶段名","detail":"关键节点目标","startDate":"YYYY-MM-DD","targetDate":"YYYY-MM-DD"}],"tasks":[{"date":"YYYY-MM-DD","title":"任务标题","desc":"怎么做","energy":"mid","estimateMin":30}]}',
@@ -644,17 +650,25 @@
       clipped
     ].filter(function (x) { return x !== ''; }).join('\n');
 
-    return askJSON(s, 'import', prompt, 4000).then(function (data) {
+    return askJSON(s, 'import', prompt, 8000, { temperature: 0.2 }).then(function (data) {
       var raw = {
         title: data.title, type: data.type, deadline: data.deadline,
         milestones: data.milestones, tasks: data.tasks,
         warnings: [], source: 'ai', mock: false
       };
-      return Importer.normalize(raw, hint);
+      var res = Importer.normalize(raw, hint);
+      // 空结果视为失败：宁可走规则兜底，也不要给用户一个空预览
+      if (!res.tasks.length && !res.milestones.length) throw new Error('AI 没有解析出任何任务或阶段');
+      if (truncated) { res.truncated = true; res.warnings.unshift(limitNote); }
+      return res;
     }).catch(function (e) {
-      // 双保险：AI 不可用时降级为本地规则解析，不阻塞用户
+      // 降级为本地规则解析，但明确标记失败原因，由 UI 展示
       var fallback = Importer.ruleParse(clipped, hint);
-      fallback.warnings.unshift({ reason: 'AI 解析失败（' + humanizeError(e) + '），已改用基础规则解析，请核对下方结果', text: '' });
+      fallback.source = 'rule';
+      fallback.aiFailed = true;
+      fallback.aiError = humanizeError(e);
+      fallback.warnings.unshift({ reason: 'AI 解析失败：' + fallback.aiError + '；已临时改用基础规则解析，结果可能不完整', text: '' });
+      if (truncated) { fallback.truncated = true; fallback.warnings.unshift(limitNote); }
       return fallback;
     });
   }

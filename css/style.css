@@ -523,6 +523,29 @@ button { font-family: inherit; }
 }
 /* 日期下拉内容较长（“今天 9-13”），窄屏下给它更多宽度 */
 .ip-fields select[data-field="date"] { flex: 1.7 1 0; }
+.ip-fields .icon-btn { padding: 2px 6px; font-size: 12px; flex-shrink: 0; }
+
+/* 任务标题行内编辑 */
+.ip-title-input {
+  width: 100%; border: 1.5px solid var(--line); border-radius: 9px;
+  padding: 6px 9px; font-size: 13.5px; font-weight: 600; font-family: inherit;
+  color: var(--text); background: #fff; margin-bottom: 4px;
+}
+.ip-title-input:focus { outline: none; border-color: var(--brand); }
+
+/* 阶段行内编辑 */
+.ip-ms-row { display: flex; align-items: center; gap: 8px; }
+.ip-ms-title {
+  flex: 1; min-width: 0; border: 1.5px solid var(--line); border-radius: 9px;
+  padding: 6px 9px; font-size: 13.5px; font-weight: 600; font-family: inherit;
+  color: var(--text); background: #fff;
+}
+.ip-ms-title:focus { outline: none; border-color: var(--brand); }
+.ip-ms-dates { display: flex; align-items: center; gap: 6px; margin-top: 5px; }
+.ip-ms-dates input {
+  flex: 1; min-width: 0; border: 1.5px solid var(--line); border-radius: 9px;
+  padding: 5px 7px; font-size: 12px; font-family: inherit; color: var(--muted); background: #fff;
+}
 .ip-task.off { opacity: .5; }
 
 /* 未识别行折叠区 */
