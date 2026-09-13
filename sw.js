@@ -8,7 +8,7 @@
  * ========================================================== */
 'use strict';
 
-var VERSION = 'v2.0.0';
+var VERSION = 'v2.1.0';
 var CACHE = 'goalflow-' + VERSION;
 
 var ASSETS = [
@@ -18,6 +18,7 @@ var ASSETS = [
   './js/store.js',
   './js/rules.js',
   './js/aggregate.js',
+  './js/importer.js',
   './js/ai.js',
   './js/adjust.js',
   './js/chart.js',
